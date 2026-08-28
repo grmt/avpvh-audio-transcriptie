@@ -1,0 +1,39 @@
+{
+  "name": "avpvh/audio-transcriptie",
+  "description": "WordPress client and editor for progressive audio transcription.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "homepage": "https://github.com/grmt/avpvh-audio-transcriptie",
+  "keywords": [
+    "audio",
+    "speech-to-text",
+    "transcription",
+    "wordpress",
+    "wordpress-plugin"
+  ],
+  "support": {
+    "issues": "https://github.com/grmt/avpvh-audio-transcriptie/issues",
+    "source": "https://github.com/grmt/avpvh-audio-transcriptie"
+  },
+  "require": {
+    "php": ">=8.1"
+  },
+  "require-dev": {
+    "dealerdirect/phpcodesniffer-composer-installer": "^1.1",
+    "phpcompatibility/phpcompatibility-wp": "^2.1",
+    "squizlabs/php_codesniffer": "^3.13",
+    "wp-coding-standards/wpcs": "^3.2"
+  },
+  "config": {
+    "allow-plugins": {
+      "dealerdirect/phpcodesniffer-composer-installer": true
+    },
+    "sort-packages": true
+  },
+  "scripts": {
+    "check": [
+      "@phpcs"
+    ],
+    "phpcs": "phpcs --standard=phpcs.xml.dist"
+  }
+}

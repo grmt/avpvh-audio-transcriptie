@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<ruleset name="AVPVH Audio Transcriptie">
+	<description>WordPress Coding Standards for the plugin.</description>
+	<file>avpvh-audio-transcriptie.php</file>
+	<file>includes</file>
+	<exclude-pattern>vendor/*</exclude-pattern>
+	<arg name="basepath" value="."/>
+	<arg name="colors"/>
+	<arg value="sp"/>
+	<rule ref="WordPress"/>
+	<rule ref="WordPress-Extra"/>
+	<rule ref="WordPress-Docs"/>
+	<!-- Custom plugin tables are intentionally queried directly and change frequently. -->
+	<rule ref="WordPress.DB.DirectDatabaseQuery.DirectQuery">
+		<exclude-pattern>includes/class-avpvh-at-plugin.php</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.DB.DirectDatabaseQuery.NoCaching">
+		<exclude-pattern>includes/class-avpvh-at-plugin.php</exclude-pattern>
+	</rule>
+	<rule ref="PHPCompatibilityWP">
+		<config name="testVersion" value="8.1-"/>
+	</rule>
+	<config name="minimum_supported_wp_version" value="6.6"/>
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="avpvh-audio-transcriptie"/>
+			</property>
+		</properties>
+	</rule>
+</ruleset>
