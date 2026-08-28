@@ -227,7 +227,7 @@ final class AVPVH_AT_Plugin {
 		add_menu_page(
 			esc_html__( 'Audio Transcripties', 'avpvh-audio-transcriptie' ),
 			esc_html__( 'Transcripties', 'avpvh-audio-transcriptie' ),
-			'upload_files',
+			'read',
 			'avpvh-audio-transcriptie',
 			array( self::class, 'render_page' ),
 			'dashicons-controls-volumeon',
@@ -271,6 +271,7 @@ final class AVPVH_AT_Plugin {
 				'root'      => esc_url_raw( rest_url( self::REST_NAMESPACE . '/' ) ),
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
 				'canManage' => current_user_can( 'manage_options' ),
+				'canEdit'   => current_user_can( 'upload_files' ),
 				'i18n'      => array(
 					'requestFailed' => esc_html__( 'De aanvraag is mislukt.', 'avpvh-audio-transcriptie' ),
 				),
@@ -318,7 +319,7 @@ final class AVPVH_AT_Plugin {
 				array(
 					'methods'             => WP_REST_Server::READABLE,
 					'callback'            => array( self::class, 'list_jobs' ),
-					'permission_callback' => array( self::class, 'can_upload' ),
+					'permission_callback' => array( self::class, 'can_read' ),
 				),
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
@@ -329,11 +330,11 @@ final class AVPVH_AT_Plugin {
 		);
 
 		$job_routes = array(
-			''                 => array( WP_REST_Server::READABLE, 'get_job' ),
-			'/upload-complete' => array( WP_REST_Server::CREATABLE, 'upload_complete' ),
-			'/segments'        => array( WP_REST_Server::EDITABLE, 'save_segments' ),
-			'/history'         => array( WP_REST_Server::READABLE, 'history' ),
-			'/summary'         => array( WP_REST_Server::CREATABLE, 'create_summary' ),
+			''                 => array( WP_REST_Server::READABLE, 'get_job', 'can_view_job' ),
+			'/upload-complete' => array( WP_REST_Server::CREATABLE, 'upload_complete', 'can_edit_job' ),
+			'/segments'        => array( WP_REST_Server::EDITABLE, 'save_segments', 'can_edit_job' ),
+			'/history'         => array( WP_REST_Server::READABLE, 'history', 'can_view_job' ),
+			'/summary'         => array( WP_REST_Server::CREATABLE, 'create_summary', 'can_edit_job' ),
 		);
 
 		foreach ( $job_routes as $suffix => $route ) {
@@ -343,7 +344,7 @@ final class AVPVH_AT_Plugin {
 				array(
 					'methods'             => $route[0],
 					'callback'            => array( self::class, $route[1] ),
-					'permission_callback' => array( self::class, 'can_access_job' ),
+					'permission_callback' => array( self::class, $route[2] ),
 					'args'                => array(
 						'id' => array(
 							'required'          => true,
@@ -363,7 +364,7 @@ final class AVPVH_AT_Plugin {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( self::class, 'restore_revision' ),
-				'permission_callback' => array( self::class, 'can_access_job' ),
+				'permission_callback' => array( self::class, 'can_edit_job' ),
 				'args'                => array(
 					'id'       => array( 'sanitize_callback' => 'absint' ),
 					'revision' => array( 'sanitize_callback' => 'absint' ),
@@ -382,15 +383,29 @@ final class AVPVH_AT_Plugin {
 		return current_user_can( 'upload_files' );
 	}
 
+	/** Whether the signed-in user may view transcripts. */
+	public static function can_read(): bool {
+		return is_user_logged_in() && current_user_can( 'read' );
+	}
+
 	/**
-	 * Checks job ownership.
+	 * Checks whether a signed-in user may view an existing job.
 	 *
 	 * @param WP_REST_Request $request Request object.
 	 * @return bool
 	 */
-	public static function can_access_job( WP_REST_Request $request ): bool {
-		$row = self::get_row( absint( $request['id'] ) );
-		return null !== $row && ( current_user_can( 'manage_options' ) || get_current_user_id() === (int) $row->user_id );
+	public static function can_view_job( WP_REST_Request $request ): bool {
+		return self::can_read() && null !== self::get_row( absint( $request['id'] ) );
+	}
+
+	/**
+	 * Checks whether the user may modify an existing job.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return bool
+	 */
+	public static function can_edit_job( WP_REST_Request $request ): bool {
+		return self::can_upload() && null !== self::get_row( absint( $request['id'] ) );
 	}
 
 	/** Returns public settings without exposing the secret. */
@@ -444,15 +459,14 @@ final class AVPVH_AT_Plugin {
 		global $wpdb;
 
 		$table = self::jobs_table();
-		if ( current_user_can( 'manage_options' ) ) {
-			$rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
-		} else {
-			$rows = $wpdb->get_results(
-				$wpdb->prepare( "SELECT * FROM {$table} WHERE user_id = %d ORDER BY updated_at DESC LIMIT 100", get_current_user_id() ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
-			);
-		}
+		$rows  = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 
-		return array_map( array( self::class, 'present_job' ), $rows );
+		return array_map(
+			static function ( object $row ): array {
+				return self::present_job( $row, false );
+			},
+			$rows
+		);
 	}
 
 	/**
@@ -870,10 +884,11 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Presents a job without secret configuration.
 	 *
-	 * @param object $row Local job row.
+	 * @param object $row              Local job row.
+	 * @param bool   $include_segments Whether transcript segments are needed.
 	 * @return array
 	 */
-	private static function present_job( object $row ): array {
+	private static function present_job( object $row, bool $include_segments = true ): array {
 		return array(
 			'id'             => (int) $row->id,
 			'service_job_id' => $row->service_job_id,
@@ -883,7 +898,7 @@ final class AVPVH_AT_Plugin {
 			'status'         => $row->status,
 			'progress'       => (float) $row->progress,
 			'duration'       => null !== $row->duration ? (float) $row->duration : null,
-			'segments'       => self::decode_segments( $row->segments ),
+			'segments'       => $include_segments ? self::decode_segments( $row->segments ) : array(),
 			'summary'        => $row->summary,
 			'revision'       => (int) $row->revision,
 			'updated_at'     => $row->updated_at,

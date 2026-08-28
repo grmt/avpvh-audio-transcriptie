@@ -71,7 +71,7 @@
 		try {
 			const jobs = await api('jobs');
 			view.innerHTML = `
-				<section class="avpvh-at-card">
+				${config.canEdit ? `<section class="avpvh-at-card">
 					<h2>Nieuwe transcriptie</h2>
 					<div class="avpvh-at-new">
 						<label>Titel <input id="avpvh-at-title" type="text"></label>
@@ -80,14 +80,14 @@
 						<button id="avpvh-at-start" type="button" class="button button-primary">Start transcriptie</button>
 					</div>
 					<progress id="avpvh-at-upload" max="100" value="0" hidden></progress>
-				</section>
+				</section>` : ''}
 				<section class="avpvh-at-card">
 					<h2>Transcripties</h2>
 					<div class="avpvh-at-jobs">
 						${jobs.map(jobRow).join('') || '<p>Nog geen transcripties.</p>'}
 					</div>
 				</section>`;
-			view.querySelector('#avpvh-at-start').addEventListener('click', startJob);
+			view.querySelector('#avpvh-at-start')?.addEventListener('click', startJob);
 			view.querySelectorAll('.avpvh-at-job').forEach((button) => button.addEventListener('click', () => openJob(Number(button.dataset.id))));
 		} catch (error) {
 			view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
@@ -189,9 +189,9 @@
 				</div>
 				<div class="avpvh-at-actions">
 					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
-					<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>
+					${config.canEdit ? '<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>' : ''}
 					<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
-					<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>
+					${config.canEdit ? '<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>' : ''}
 				</div>
 			</header>
 			<div class="avpvh-at-summary" ${current.summary ? '' : 'hidden'}><h3>Samenvatting</h3><div>${current.summary || ''}</div></div>
@@ -206,7 +206,7 @@
 			clearTimeout(pollTimer);
 			renderJobList();
 		});
-		view.querySelector('#avpvh-at-insert').addEventListener('click', insertSegment);
+		view.querySelector('#avpvh-at-insert')?.addEventListener('click', insertSegment);
 		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
 			try {
@@ -217,7 +217,7 @@
 			}
 		});
 		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
-		view.querySelector('#avpvh-at-summary').addEventListener('click', createSummary);
+		view.querySelector('#avpvh-at-summary')?.addEventListener('click', createSummary);
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
 		bindSegmentRows();
 		setFocus(current.segments[0]?.id || null, false);
@@ -230,9 +230,9 @@
 	function segmentRow(segment) {
 		return `<article class="avpvh-at-segment" data-id="${escapeHtml(segment.id)}" tabindex="0">
 			<button type="button" class="avpvh-at-time" title="Speel vanaf dit fragment">${clock(segment.start)}</button>
-			<label><span>Partij</span><input class="avpvh-at-party" type="text" list="avpvh-at-parties" value="${escapeHtml(segment.party)}"></label>
-			<label><span>Spreker</span><input class="avpvh-at-speaker" type="text" list="avpvh-at-speakers" value="${escapeHtml(segment.speaker)}"></label>
-			<label class="avpvh-at-text"><span>Transcriptie</span><textarea>${escapeHtml(segment.text)}</textarea></label>
+			<label><span>Partij</span><input class="avpvh-at-party" type="text" list="avpvh-at-parties" value="${escapeHtml(segment.party)}" ${config.canEdit ? '' : 'disabled'}></label>
+			<label><span>Spreker</span><input class="avpvh-at-speaker" type="text" list="avpvh-at-speakers" value="${escapeHtml(segment.speaker)}" ${config.canEdit ? '' : 'disabled'}></label>
+			<label class="avpvh-at-text"><span>Transcriptie</span><textarea ${config.canEdit ? '' : 'readonly'}>${escapeHtml(segment.text)}</textarea></label>
 		</article>`;
 	}
 
@@ -250,15 +250,17 @@
 				dirty.add(id);
 				scheduleSave();
 			};
-			text.addEventListener('input', change);
-			speaker.addEventListener('input', () => {
-				const inferred = inferredParty(speaker.value);
-				if (inferred) {
-					party.value = inferred;
-				}
-				change();
-			});
-			party.addEventListener('input', change);
+			if (config.canEdit) {
+				text.addEventListener('input', change);
+				speaker.addEventListener('input', () => {
+					const inferred = inferredParty(speaker.value);
+					if (inferred) {
+						party.value = inferred;
+					}
+					change();
+				});
+				party.addEventListener('input', change);
+			}
 			row.addEventListener('mousedown', () => setFocus(id, false));
 			row.addEventListener('focusin', () => setFocus(id, false));
 			row.querySelector('.avpvh-at-time').addEventListener('click', () => playSegment(id));
@@ -456,7 +458,7 @@
 		panel.innerHTML = '<p>Geschiedenis laden…</p>';
 		try {
 			const revisions = await api(`jobs/${current.id}/history`);
-			panel.innerHTML = `<h3>Correctiegeschiedenis</h3>${revisions.map((revision) => `<button type="button" class="button avpvh-at-restore" data-revision="${revision.revision}">Versie ${revision.revision} · ${escapeHtml(revision.created_at)}</button>`).join('') || '<p>Nog geen eerdere versies.</p>'}`;
+			panel.innerHTML = `<h3>Correctiegeschiedenis</h3>${revisions.map((revision) => config.canEdit ? `<button type="button" class="button avpvh-at-restore" data-revision="${revision.revision}">Versie ${revision.revision} · ${escapeHtml(revision.created_at)}</button>` : `<p>Versie ${revision.revision} · ${escapeHtml(revision.created_at)}</p>`).join('') || '<p>Nog geen eerdere versies.</p>'}`;
 			panel.querySelectorAll('.avpvh-at-restore').forEach((button) => button.addEventListener('click', async () => {
 				if (!window.confirm('Deze versie terugzetten? De huidige versie blijft in de geschiedenis bewaard.')) {
 					return;
