@@ -201,8 +201,11 @@
 					${current.audio_url ? `<audio id="avpvh-at-player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : ''}
 				</div>
 				<div class="avpvh-at-actions">
+					${config.canEdit ? '<button id="avpvh-at-rename" type="button" class="button">Naam wijzigen</button>' : ''}
+					<button id="avpvh-at-storage" type="button" class="button">Bestanden &amp; opslag</button>
 					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
 					<button id="avpvh-at-export-html" type="button" class="button">Exporteer HTML</button>
+					<button id="avpvh-at-export-markdown" type="button" class="button">Exporteer Markdown</button>
 					${config.canPublish ? '<button id="avpvh-at-publish-page" type="button" class="button button-primary">Publiceer als pagina</button>' : ''}
 					${config.canEdit ? '<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>' : ''}
 					${config.canEdit ? '<button id="avpvh-at-delete" type="button" class="button">Zin verwijderen</button>' : ''}
@@ -214,7 +217,10 @@
 			<datalist id="avpvh-at-speakers">${speakers.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
 			<datalist id="avpvh-at-parties">${parties.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
 			<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
+			<div id="avpvh-at-rename-panel" class="avpvh-at-card" hidden></div>
+			<div id="avpvh-at-storage-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-publish-panel" class="avpvh-at-card" hidden></div>
+			<div id="avpvh-at-summary-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-history-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>`;
 
@@ -224,8 +230,11 @@
 			renderJobList();
 		});
 		view.querySelector('#avpvh-at-insert')?.addEventListener('click', insertSegment);
+		view.querySelector('#avpvh-at-rename')?.addEventListener('click', renderRenamePanel);
+		view.querySelector('#avpvh-at-storage').addEventListener('click', renderStoragePanel);
 		view.querySelector('#avpvh-at-delete')?.addEventListener('click', deleteSegment);
 		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
+		view.querySelector('#avpvh-at-export-markdown').addEventListener('click', exportMarkdown);
 		view.querySelector('#avpvh-at-publish-page')?.addEventListener('click', renderPublishPanel);
 		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
@@ -237,7 +246,7 @@
 			}
 		});
 		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
-		view.querySelector('#avpvh-at-summary')?.addEventListener('click', createSummary);
+		view.querySelector('#avpvh-at-summary')?.addEventListener('click', renderSummaryPanel);
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
 		bindSegmentRows();
 		bindAudioSync();
@@ -246,6 +255,54 @@
 
 	function uniqueValues(segments, field) {
 		return [...new Set(segments.map((segment) => segment[field]).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+	}
+
+	function renderRenamePanel() {
+		const panel = app.querySelector('#avpvh-at-rename-panel');
+		if (!panel.hidden) {
+			panel.hidden = true;
+			return;
+		}
+		panel.hidden = false;
+		panel.innerHTML = `<h3>Naam wijzigen</h3>
+			<label>Naam transcriptie <input id="avpvh-at-new-title" type="text" value="${escapeHtml(current.title)}"></label>
+			<button id="avpvh-at-save-title" type="button" class="button button-primary">Naam opslaan</button>
+			<span id="avpvh-at-title-result" aria-live="polite"></span>`;
+		panel.querySelector('#avpvh-at-save-title').addEventListener('click', async () => {
+			const title = panel.querySelector('#avpvh-at-new-title').value.trim();
+			const result = panel.querySelector('#avpvh-at-title-result');
+			if (!title) {
+				result.textContent = ' Vul een naam in.';
+				return;
+			}
+			try {
+				current = await api(`jobs/${current.id}/title`, {
+					method: 'PUT',
+					body: JSON.stringify({ title })
+				});
+				app.querySelector('.avpvh-at-editor-head h2').textContent = current.title;
+				result.textContent = ' Naam opgeslagen.';
+			} catch (error) {
+				result.textContent = ` ${error.message}`;
+			}
+		});
+	}
+
+	function renderStoragePanel() {
+		const panel = app.querySelector('#avpvh-at-storage-panel');
+		if (!panel.hidden) {
+			panel.hidden = true;
+			return;
+		}
+		panel.hidden = false;
+		panel.innerHTML = `<h3>Bestanden en opslag</h3>
+			<dl class="avpvh-at-storage-list">
+				<dt>Audio</dt><dd>${current.audio_url ? `<a href="${escapeHtml(current.audio_url)}" target="_blank" rel="noopener">${escapeHtml(current.audio_name || current.audio_url)}</a>` : escapeHtml(current.audio_name || 'Geen audiolocatie beschikbaar')}</dd>
+				<dt>Transcriptie</dt><dd>WordPress-database, transcriptie ${current.id}; ${current.segments.length} fragmenten.</dd>
+				<dt>Correctiehistorie</dt><dd>WordPress-database; maximaal 50 bewaarde revisies.</dd>
+				<dt>HTML/Markdown-export</dt><dd>Wordt door de browser in de map Downloads geplaatst.</dd>
+				<dt>WordPress-pagina</dt><dd>Gebruik “Publiceer als pagina” om een live pagina te maken die altijd de actuele databaseversie toont.</dd>
+			</dl>`;
 	}
 
 	function segmentRow(segment) {
@@ -444,6 +501,23 @@
 		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 	}
 
+	function exportMarkdown() {
+		const cell = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+		const lines = [
+			`# ${String(current.title || 'Transcriptie').replace(/\r?\n/g, ' ')}`,
+			'',
+			'| Tijd | Partij | Spreker | Transcriptie |',
+			'| --- | --- | --- | --- |',
+			...current.segments.map((segment) => `| ${clock(segment.start)} | ${cell(segment.party)} | ${cell(segment.speaker)} | ${cell(segment.text)} |`)
+		];
+		const blob = new Blob([`${lines.join('\n')}\n`], { type: 'text/markdown;charset=utf-8' });
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(blob);
+		link.download = `${String(current.title || 'transcriptie').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'transcriptie'}.md`;
+		link.click();
+		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+	}
+
 	function filterRows(event) {
 		const query = event.target.value.trim().toLocaleLowerCase();
 		const visibleRows = [];
@@ -619,12 +693,28 @@
 		}
 	}
 
-	async function createSummary() {
-		await flushSave();
-		const prompt = window.prompt('Instructie voor de samenvatting:', defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.');
-		if (null === prompt) {
+	function renderSummaryPanel() {
+		const panel = app.querySelector('#avpvh-at-summary-panel');
+		if (!panel.hidden) {
+			panel.hidden = true;
 			return;
 		}
+		panel.hidden = false;
+		panel.innerHTML = `<h3>Samenvatting maken</h3>
+			<label>Instructie <textarea id="avpvh-at-summary-instruction" rows="8">${escapeHtml(defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.')}</textarea></label>
+			<button id="avpvh-at-run-summary" type="button" class="button button-primary">Samenvatting maken</button>
+			<span id="avpvh-at-summary-result" aria-live="polite"></span>`;
+		panel.querySelector('#avpvh-at-run-summary').addEventListener('click', createSummary);
+	}
+
+	async function createSummary() {
+		const panel = app.querySelector('#avpvh-at-summary-panel');
+		const button = panel.querySelector('#avpvh-at-run-summary');
+		const resultText = panel.querySelector('#avpvh-at-summary-result');
+		const prompt = panel.querySelector('#avpvh-at-summary-instruction').value;
+		button.disabled = true;
+		resultText.textContent = ' Correcties opslaan en samenvatting maken…';
+		await flushSave();
 		try {
 			const result = await api(`jobs/${current.id}/summary`, {
 				method: 'POST',
@@ -634,10 +724,11 @@
 				current.summary = result.summary;
 				renderEditor();
 			} else {
-				notice('De samenvatting is gestart en verschijnt zodra deze klaar is.', 'info');
+				resultText.textContent = ' De samenvatting is gestart en verschijnt zodra deze klaar is.';
 			}
 		} catch (error) {
-			notice(error.message, 'error');
+			resultText.textContent = ` ${error.message}`;
+			button.disabled = false;
 		}
 	}
 

@@ -75,6 +75,33 @@
 	width: 100%;
 }
 
+#avpvh-at-rename-panel label,
+#avpvh-at-publish-panel label,
+#avpvh-at-summary-panel label {
+	display: grid;
+	gap: 4px;
+	max-width: 900px;
+	margin: 10px 0;
+}
+
+#avpvh-at-summary-panel textarea {
+	width: 100%;
+}
+
+.avpvh-at-storage-list {
+	display: grid;
+	grid-template-columns: 170px 1fr;
+	gap: 8px 14px;
+}
+
+.avpvh-at-storage-list dt {
+	font-weight: 600;
+}
+
+.avpvh-at-storage-list dd {
+	margin: 0;
+}
+
 #avpvh-at-upload {
 	width: 100%;
 	margin-top: 12px;

@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.6.0
+Stable tag: 0.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,13 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.7.0 =
+
+* Rename transcripts from a non-blocking editor panel.
+* Show audio, database, revision, export, and page storage information.
+* Replace the blocking summary prompt with an inline editable panel.
+* Export the corrected transcript as a Markdown table.
+
 = 0.6.0 =
 
 * Create or update a live WordPress transcript page from the editor.
@@ -112,6 +119,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.7.0 =
+
+Adds transcript renaming, storage information, non-blocking summary instructions, and Markdown export.
 
 = 0.6.0 =
 

@@ -369,6 +369,7 @@ final class AVPVH_AT_Plugin {
 
 		$job_routes = array(
 			''                 => array( WP_REST_Server::READABLE, 'get_job', 'can_view_job' ),
+			'/title'           => array( WP_REST_Server::EDITABLE, 'update_title', 'can_edit_job' ),
 			'/upload-complete' => array( WP_REST_Server::CREATABLE, 'upload_complete', 'can_edit_job' ),
 			'/segments'        => array( WP_REST_Server::EDITABLE, 'save_segments', 'can_edit_job' ),
 			'/history'         => array( WP_REST_Server::READABLE, 'history', 'can_view_job' ),
@@ -639,6 +640,29 @@ final class AVPVH_AT_Plugin {
 	public static function get_job( WP_REST_Request $request ): array|WP_Error {
 		$row = self::refresh_job( self::get_row( absint( $request['id'] ) ) );
 		return is_wp_error( $row ) ? $row : self::present_job( $row );
+	}
+
+	/**
+	 * Updates the human-readable transcript title.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return array|WP_Error
+	 */
+	public static function update_title( WP_REST_Request $request ): array|WP_Error {
+		global $wpdb;
+		$title = sanitize_text_field( (string) $request->get_param( 'title' ) );
+		if ( '' === $title ) {
+			return new WP_Error( 'avpvh_at_title_required', __( 'Vul een naam voor de transcriptie in.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
+		$wpdb->update(
+			self::jobs_table(),
+			array(
+				'title'      => $title,
+				'updated_at' => current_time( 'mysql', true ),
+			),
+			array( 'id' => absint( $request['id'] ) )
+		);
+		return self::present_job( self::get_row( absint( $request['id'] ) ) );
 	}
 
 	/**
