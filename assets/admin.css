@@ -35,6 +35,42 @@
 	background: #fff;
 }
 
+.avpvh-at-section > summary {
+	cursor: pointer;
+	font-size: 1.15em;
+}
+
+.avpvh-at-section[open] > summary {
+	margin-bottom: 14px;
+}
+
+.avpvh-at-section > summary span {
+	margin-left: 8px;
+	color: #646970;
+	font-size: .85em;
+	font-weight: 400;
+}
+
+.avpvh-at-shortcode-field {
+	display: flex;
+	gap: 6px;
+}
+
+.avpvh-at-shortcode-field input {
+	flex: 1;
+}
+
+.avpvh-at-transcript-section {
+	padding-right: 0;
+	padding-bottom: 0;
+	padding-left: 0;
+}
+
+.avpvh-at-transcript-section > summary {
+	margin-right: 18px;
+	margin-left: 18px;
+}
+
 .avpvh-at-new label,
 .avpvh-at-settings label {
 	display: grid;

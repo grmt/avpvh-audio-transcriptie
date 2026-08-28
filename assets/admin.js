@@ -209,23 +209,26 @@
 						<button id="avpvh-at-export-html" type="button" class="button">HTML-bestand</button>
 						<button id="avpvh-at-export-markdown" type="button" class="button">Markdown-tabel</button>
 					</div></details>
-					<details class="avpvh-at-action-menu"><summary class="button">Op pagina zetten</summary><div>
-						<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode bekijken</button>
-						${config.canPublish ? '<button id="avpvh-at-publish-page" type="button" class="button">WordPress-pagina maken</button>' : ''}
-					</div></details>
-					${config.canEdit ? '<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>' : ''}
 				</div>
 			</header>
-			<div class="avpvh-at-summary" ${current.summary ? '' : 'hidden'}><h3>Samenvatting</h3><div>${current.summary || ''}</div></div>
 			<datalist id="avpvh-at-speakers">${speakers.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
 			<datalist id="avpvh-at-parties">${parties.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
-			<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
 			<div id="avpvh-at-rename-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-storage-panel" class="avpvh-at-card" hidden></div>
-			<div id="avpvh-at-publish-panel" class="avpvh-at-card" hidden></div>
-			<div id="avpvh-at-summary-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-history-panel" class="avpvh-at-card" hidden></div>
-			<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>`;
+			<details id="avpvh-at-publish-panel" class="avpvh-at-card avpvh-at-section">
+				<summary><strong>Transcriptiepagina maken</strong></summary>
+				<div class="avpvh-at-panel-body"><p>Open deze sectie om de shortcode te bekijken of een WordPress-pagina te maken.</p></div>
+			</details>
+			<details id="avpvh-at-summary-panel" class="avpvh-at-card avpvh-at-section">
+				<summary><strong>Samenvatting maken</strong></summary>
+				<div class="avpvh-at-panel-body">${current.summary ? `<div class="avpvh-at-summary-result">${current.summary}</div>` : '<p>Open deze sectie om een samenvatting te laten maken.</p>'}</div>
+			</details>
+			<details class="avpvh-at-card avpvh-at-section avpvh-at-transcript-section" open>
+				<summary><strong>Transcriptie</strong> <span>${current.segments.length} fragmenten</span></summary>
+				<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
+				<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>
+			</details>`;
 
 		view.querySelector('#avpvh-at-back').addEventListener('click', async () => {
 			await flushSave();
@@ -236,19 +239,20 @@
 		view.querySelector('#avpvh-at-storage').addEventListener('click', renderStoragePanel);
 		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
 		view.querySelector('#avpvh-at-export-markdown').addEventListener('click', exportMarkdown);
-		view.querySelector('#avpvh-at-publish-page')?.addEventListener('click', () => renderPublishPanel());
-		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
-			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
-			renderPublishPanel(true);
-			try {
-				await navigator.clipboard.writeText(shortcode);
-				setSaveState('Shortcode gekopieerd');
-			} catch (error) {
-				setSaveState('Selecteer en kopieer de shortcode hieronder');
+		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
+		view.querySelector('#avpvh-at-publish-panel').addEventListener('toggle', (event) => {
+			const body = event.currentTarget.querySelector('.avpvh-at-panel-body');
+			if (event.currentTarget.open && 'yes' !== body.dataset.loaded && 'yes' !== body.dataset.loading) {
+				body.dataset.loading = 'yes';
+				renderPublishPanel().finally(() => { body.dataset.loading = ''; });
 			}
 		});
-		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
-		view.querySelector('#avpvh-at-summary')?.addEventListener('click', renderSummaryPanel);
+		view.querySelector('#avpvh-at-summary-panel').addEventListener('toggle', (event) => {
+			const body = event.currentTarget.querySelector('.avpvh-at-panel-body');
+			if (event.currentTarget.open && 'yes' !== body.dataset.loaded) {
+				renderSummaryPanel();
+			}
+		});
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
 		bindSegmentRows();
 		bindAudioSync();
@@ -261,6 +265,9 @@
 
 	function revealPanel(panel) {
 		panel.hidden = false;
+		if ('DETAILS' === panel.tagName) {
+			panel.open = true;
+		}
 		requestAnimationFrame(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 	}
 
@@ -563,22 +570,25 @@
 		}
 	}
 
-	async function renderPublishPanel(shortcodeOnly = false) {
+	async function renderPublishPanel() {
 		const panel = app.querySelector('#avpvh-at-publish-panel');
-		if (!shortcodeOnly && !panel.hidden) {
-			panel.hidden = true;
+		const body = panel.querySelector('.avpvh-at-panel-body');
+		if (panel.open && 'yes' === body.dataset.loaded) {
+			panel.open = false;
 			return;
 		}
+		body.dataset.loading = 'yes';
 		revealPanel(panel);
-		panel.innerHTML = '<p class="avpvh-at-loading">Publicatieopties laden<span></span></p>';
+		body.innerHTML = '<p class="avpvh-at-loading">Publicatieopties laden<span></span></p>';
 		try {
 			const options = await api(`publishing-options?job_id=${current.id}`);
 			const existing = options.existing_page;
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
 			const menus = [...(options.menus || []), ...(options.block_menus || [])];
-			panel.innerHTML = `<h3>${existing ? 'Transcriptiepagina bijwerken' : 'Transcriptiepagina maken'}</h3>
-				<p>De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.</p>
-				<label>Benodigde shortcode <input id="avpvh-at-shortcode" type="text" readonly value="${escapeHtml(shortcode)}"></label>
+			panel.querySelector('summary strong').textContent = existing ? 'Transcriptiepagina bijwerken' : 'Transcriptiepagina maken';
+			body.dataset.loaded = 'yes';
+			body.innerHTML = `<p>De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.</p>
+				<label>Benodigde shortcode <span class="avpvh-at-shortcode-field"><input id="avpvh-at-shortcode" type="text" readonly value="${escapeHtml(shortcode)}"><button id="avpvh-at-copy-shortcode" type="button" class="button">Kopiëren</button></span></label>
 				<p class="description">Plak deze shortcode in een shortcodeblok op een bestaande pagina. “Pagina maken” doet dit automatisch.</p>
 				<label>Paginatitel <input id="avpvh-at-page-title" type="text" value="${escapeHtml(existing?.title || current.title)}"></label>
 				<label>Status <select id="avpvh-at-page-status"><option value="draft" ${'publish' !== existing?.status ? 'selected' : ''}>Concept</option><option value="publish" ${'publish' === existing?.status ? 'selected' : ''}>Gepubliceerd</option></select></label>
@@ -594,13 +604,27 @@
 			const updateParents = () => {
 				const selected = menus.find((item) => item.value === menu.value);
 				parent.innerHTML = '<option value="0">Op hoofdniveau</option>' + (selected?.items || []).filter((item) => item.value !== existing?.menu_item_ref).map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === existing?.parent_ref ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
-				const menuAllowed = 'publish' === status.value && options.can_manage_menus;
-				menu.disabled = !menuAllowed;
-				parent.disabled = !menuAllowed || '0' === menu.value;
+				menu.disabled = !options.can_manage_menus;
+				parent.disabled = !options.can_manage_menus || '0' === menu.value;
 			};
-			menu.addEventListener('change', updateParents);
+			menu.addEventListener('change', () => {
+				if ('0' !== menu.value) {
+					status.value = 'publish';
+				}
+				updateParents();
+			});
 			status.addEventListener('change', updateParents);
 			updateParents();
+			panel.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
+				const input = panel.querySelector('#avpvh-at-shortcode');
+				input.select();
+				try {
+					await navigator.clipboard.writeText(shortcode);
+					setSaveState('Shortcode gekopieerd');
+				} catch (error) {
+					setSaveState('Shortcode geselecteerd; druk op Ctrl+C');
+				}
+			});
 
 			panel.querySelector('#avpvh-at-page-create').addEventListener('click', async () => {
 				const button = panel.querySelector('#avpvh-at-page-create');
@@ -623,11 +647,10 @@
 					button.disabled = false;
 				}
 			});
-			if (shortcodeOnly) {
-				panel.querySelector('#avpvh-at-shortcode').select();
-			}
 		} catch (error) {
-			panel.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			body.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+		} finally {
+			body.dataset.loading = '';
 		}
 	}
 
@@ -731,12 +754,14 @@
 
 	function renderSummaryPanel() {
 		const panel = app.querySelector('#avpvh-at-summary-panel');
-		if (!panel.hidden) {
-			panel.hidden = true;
+		const body = panel.querySelector('.avpvh-at-panel-body');
+		if (panel.open && 'yes' === body.dataset.loaded) {
+			panel.open = false;
 			return;
 		}
 		revealPanel(panel);
-		panel.innerHTML = `<h3>Samenvatting maken</h3>
+		body.dataset.loaded = 'yes';
+		body.innerHTML = `${current.summary ? `<div class="avpvh-at-summary-result"><h3>Bestaande samenvatting</h3>${current.summary}</div>` : ''}
 			${config.summaryConfigured ? '' : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Vul onder Instellingen de LLM API-URL, API-key en het model in.</p>'}
 			<label>Instructie <textarea id="avpvh-at-summary-instruction" rows="8">${escapeHtml(defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.')}</textarea></label>
 			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>Samenvatting maken</button>
