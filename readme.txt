@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.4.1
+Stable tag: 0.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,12 +18,12 @@ The plugin is an open-source client for a separately hosted transcription servic
 
 = External service disclosure =
 
-To provide transcription and optional summaries, the plugin sends the following data to the service URL configured by a site administrator:
+To provide transcription and optional summaries, the plugin sends the following data to the transcription-service URL and, when separately configured, the summary API URL chosen by a site administrator:
 
 * the selected audio file;
 * its file name, size, MIME type, requested language, and model;
 * corrected transcript segments, speaker labels, group labels, and a summary instruction;
-* the configured service key in an Authorization header.
+* the applicable configured service or summary API key in an Authorization header.
 
 The administrator chooses and controls the service endpoint. This project does not prescribe or silently contact a particular provider. Before using an endpoint, the administrator must review that provider's terms and privacy policy and ensure there is a lawful basis for processing the recording and participant data. Removing the service URL disables new service requests.
 
@@ -35,7 +35,9 @@ The administrator chooses and controls the service endpoint. This project does n
 * Up to 50 locally stored correction revisions per transcript.
 * Speaker and group labels derived from the current transcript, with no built-in identities.
 * Keyboard playback: Space outside form controls or Control+Space anywhere.
-* Optional service-generated summary.
+* Playback-synchronized segment focus and sentence deletion with revision recovery.
+* Optional summary through the transcription service or a separately configured OpenAI-compatible LLM endpoint.
+* Standalone interactive HTML export.
 * Read-only page embedding with `[avpvh_audio_transcriptie id="1"]`.
 
 == Installation ==
@@ -74,6 +76,13 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.5.0 =
+
+* Keep the focused transcript segment synchronized with audio playback.
+* Delete the focused sentence with autosave and revision-history recovery.
+* Export the corrected transcript as a standalone interactive HTML file.
+* Configure a separate OpenAI-compatible LLM endpoint, model, and API key for summaries.
+
 = 0.4.1 =
 
 * Show existing transcripts before the collapsed new-transcription form.
@@ -97,6 +106,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.5.0 =
+
+Adds playback synchronization, sentence deletion, HTML export, and configurable LLM summaries.
 
 = 0.4.1 =
 

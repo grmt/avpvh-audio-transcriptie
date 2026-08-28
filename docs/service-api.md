@@ -76,6 +76,8 @@ Segment IDs must remain stable across polling responses. Status is one of `creat
 
 Receives the current corrected segments and a summary instruction. It either returns `{"summary":"..."}` or acknowledges background generation; a later job response may then contain `summary`.
 
+Alternatively, administrators can configure a separate OpenAI-compatible chat-completions URL, model, and API key in WordPress. In that mode the plugin sends the corrected transcript directly to that endpoint and stores the returned summary. The summary key is independent from the transcription-service key and can also be supplied through `AVPVH_AT_SUMMARY_API_KEY` in `wp-config.php`.
+
 ## Required service safeguards
 
 - Authenticate every control request and authorize access to each job.

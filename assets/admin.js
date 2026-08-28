@@ -202,7 +202,9 @@
 				</div>
 				<div class="avpvh-at-actions">
 					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
+					<button id="avpvh-at-export-html" type="button" class="button">Exporteer HTML</button>
 					${config.canEdit ? '<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>' : ''}
+					${config.canEdit ? '<button id="avpvh-at-delete" type="button" class="button">Zin verwijderen</button>' : ''}
 					<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
 					${config.canEdit ? '<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>' : ''}
 				</div>
@@ -220,6 +222,8 @@
 			renderJobList();
 		});
 		view.querySelector('#avpvh-at-insert')?.addEventListener('click', insertSegment);
+		view.querySelector('#avpvh-at-delete')?.addEventListener('click', deleteSegment);
+		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
 		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
 			try {
@@ -233,6 +237,7 @@
 		view.querySelector('#avpvh-at-summary')?.addEventListener('click', createSummary);
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
 		bindSegmentRows();
+		bindAudioSync();
 		setFocus(current.segments[0]?.id || null, false);
 	}
 
@@ -314,6 +319,31 @@
 		player.play();
 	}
 
+	function bindAudioSync() {
+		const player = app.querySelector('#avpvh-at-player');
+		if (!player) {
+			return;
+		}
+		const sync = () => {
+			const time = player.currentTime;
+			let active = null;
+			for (let index = 0; index < current.segments.length; index += 1) {
+				const segment = current.segments[index];
+				const nextStart = current.segments[index + 1]?.start ?? Math.max(segment.end, segment.start + 0.001);
+				if (time >= segment.start && time < nextStart) {
+					active = segment;
+					break;
+				}
+			}
+			if (active && active.id !== focusedId) {
+				setFocus(active.id, true);
+			}
+		};
+		player.addEventListener('timeupdate', sync);
+		player.addEventListener('seeked', sync);
+		player.addEventListener('play', sync);
+	}
+
 	function toggleAudio() {
 		const player = app.querySelector('#avpvh-at-player');
 		if (!player) {
@@ -371,6 +401,44 @@
 		setFocus(id);
 		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(id)}"] textarea`)?.focus();
 		scheduleSave();
+	}
+
+	function deleteSegment() {
+		const index = current.segments.findIndex((segment) => segment.id === focusedId);
+		if (index < 0) {
+			notice('Kies eerst de zin die je wilt verwijderen.', 'warning');
+			return;
+		}
+		if (!window.confirm('Deze zin verwijderen? Je kunt dit later via Geschiedenis terugzetten.')) {
+			return;
+		}
+		const nextFocus = current.segments[index + 1]?.id || current.segments[index - 1]?.id || null;
+		current.segments.splice(index, 1);
+		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(focusedId)}"]`)?.remove();
+		dirty.add('__structure__');
+		setFocus(nextFocus, true);
+		scheduleSave();
+	}
+
+	function exportHtml() {
+		const title = escapeHtml(current.title || 'Transcriptie');
+		const summary = current.summary ? `<section class="summary"><h2>Samenvatting</h2>${current.summary}</section>` : '';
+		const audio = current.audio_url ? `<audio id="player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : '';
+		const rows = current.segments.map((segment) => `<article class="segment" data-start="${Number(segment.start) || 0}">
+			<button type="button" class="time">${clock(segment.start)}</button>
+			<div><div class="labels"><strong>${escapeHtml(segment.speaker || 'Spreker onbekend')}</strong>${segment.party ? ` <span>${escapeHtml(segment.party)}</span>` : ''}</div><p>${escapeHtml(segment.text).replace(/\n/g, '<br>')}</p></div>
+		</article>`).join('');
+		const documentHtml = `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
+		body{max-width:1100px;margin:2rem auto;padding:0 1rem;font:16px/1.55 system-ui,sans-serif;color:#1d2327}audio{width:100%;position:sticky;top:0;background:#fff}.summary,.segment{padding:1rem;border-bottom:1px solid #ddd}.segment{display:grid;grid-template-columns:7rem 1fr;gap:1rem}.time{border:0;background:none;color:#06c;cursor:pointer}.labels span{margin-left:.5rem;color:#555}p{margin:.35rem 0}.is-current{background:#eef7ff}@media(max-width:600px){.segment{grid-template-columns:1fr}}</style></head><body><h1>${title}</h1>${audio}${summary}<main>${rows}</main><script>
+		document.querySelectorAll('.segment').forEach(row=>row.querySelector('.time').addEventListener('click',()=>{const p=document.querySelector('#player');if(p){p.currentTime=Number(row.dataset.start);p.play()}}));
+		const p=document.querySelector('#player');if(p)p.addEventListener('timeupdate',()=>{let active;document.querySelectorAll('.segment').forEach(row=>{row.classList.remove('is-current');if(Number(row.dataset.start)<=p.currentTime)active=row});if(active){active.classList.add('is-current')}});
+		<\/script></body></html>`;
+		const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(blob);
+		link.download = `${String(current.title || 'transcriptie').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'transcriptie'}.html`;
+		link.click();
+		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 	}
 
 	function filterRows(event) {
@@ -487,10 +555,14 @@
 
 	async function createSummary() {
 		await flushSave();
+		const prompt = window.prompt('Instructie voor de samenvatting:', defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.');
+		if (null === prompt) {
+			return;
+		}
 		try {
 			const result = await api(`jobs/${current.id}/summary`, {
 				method: 'POST',
-				body: JSON.stringify({ prompt: 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.' })
+				body: JSON.stringify({ prompt })
 			});
 			if (result.summary) {
 				current.summary = result.summary;
@@ -522,12 +594,19 @@
 				<label>Standaardprompt <textarea id="avpvh-at-prompt-setting" rows="7">${escapeHtml(settings.default_prompt)}</textarea></label>
 				<label>Standaardglossary <textarea id="avpvh-at-glossary-setting" rows="7" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(settings.default_glossary)}</textarea></label>
 				<p>Status: <strong>${settings.license_registered ? 'sleutel geregistreerd' : 'niet ingesteld'}</strong></p>
-				<button id="avpvh-at-save-settings" type="button" class="button button-primary">Opslaan en valideren</button>
+				<h3>Samenvatting (OpenAI-compatibele LLM-API)</h3>
+				<p>Gebruik hier de volledige chat-completions-URL en de API-key van de gekozen LLM-provider. Deze sleutel staat los van de transcriptieservicesleutel.</p>
+				<label>LLM API-URL <input id="avpvh-at-summary-url" type="url" value="${escapeHtml(settings.summary_api_url)}" placeholder="https://provider.example/v1/chat/completions"></label>
+				<label>LLM API-key <input id="avpvh-at-summary-key" type="password" placeholder="${escapeHtml(settings.summary_key_hint || 'API-key; leeg laten om de bestaande te behouden')}"></label>
+				<label>LLM-model <input id="avpvh-at-summary-model" type="text" value="${escapeHtml(settings.summary_model)}" placeholder="Modelnaam van de provider"></label>
+				<label>Standaardinstructie <textarea id="avpvh-at-summary-prompt" rows="5">${escapeHtml(settings.summary_prompt)}</textarea></label>
+				<p>Status LLM-key: <strong>${settings.summary_registered ? 'sleutel geregistreerd' : 'niet ingesteld of niet vereist'}</strong></p>
+				<button id="avpvh-at-save-settings" type="button" class="button button-primary">Instellingen opslaan</button>
 				<span id="avpvh-at-license-result" aria-live="polite"></span>
 			</section>`;
 			view.querySelector('#avpvh-at-save-settings').addEventListener('click', async () => {
 				try {
-					await api('settings', {
+					const updated = await api('settings', {
 						method: 'PUT',
 						body: JSON.stringify({
 							service_url: view.querySelector('#avpvh-at-url').value,
@@ -537,11 +616,20 @@
 							default_language: view.querySelector('#avpvh-at-language-setting').value,
 							chunk_minutes: Number(view.querySelector('#avpvh-at-chunk-setting').value),
 							default_prompt: view.querySelector('#avpvh-at-prompt-setting').value,
-							default_glossary: view.querySelector('#avpvh-at-glossary-setting').value
+							default_glossary: view.querySelector('#avpvh-at-glossary-setting').value,
+							summary_api_url: view.querySelector('#avpvh-at-summary-url').value,
+							summary_api_key: view.querySelector('#avpvh-at-summary-key').value,
+							summary_model: view.querySelector('#avpvh-at-summary-model').value,
+							summary_prompt: view.querySelector('#avpvh-at-summary-prompt').value
 						})
 					});
-					const result = await api('license/validate', { method: 'POST', body: '{}' });
-					view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Sleutel geldig ✓' : ' Sleutel ongeldig';
+					Object.assign(defaults, updated);
+					if (updated.service_url && updated.license_registered) {
+						const result = await api('license/validate', { method: 'POST', body: '{}' });
+						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Instellingen opgeslagen; transcriptiesleutel geldig ✓' : ' Instellingen opgeslagen; transcriptiesleutel ongeldig';
+					} else {
+						view.querySelector('#avpvh-at-license-result').textContent = ' Instellingen opgeslagen';
+					}
 				} catch (error) {
 					view.querySelector('#avpvh-at-license-result').textContent = ` ${error.message}`;
 				}

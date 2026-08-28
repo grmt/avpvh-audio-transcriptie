@@ -17,10 +17,13 @@ This is an early development release. The WordPress client and editor are implem
 - Automatically save manual corrections without letting later service updates overwrite them.
 - Restore any of the 50 most recent correction revisions.
 - Add a sentence; selected text is moved from the current segment to the inserted segment.
+- Delete the focused sentence and restore it later from revision history.
 - Assign free-form speakers and groups without hard-coded identities.
-- Play the focused fragment and navigate filtered results with the keyboard.
+- Keep the focused segment synchronized with audio playback and navigate filtered results with the keyboard.
 - Upload audio directly to a temporary service URL rather than the public media library.
 - Request an optional summary after correction.
+- Configure a separate OpenAI-compatible LLM endpoint for summaries.
+- Export a corrected transcript as a standalone interactive HTML file.
 - Embed a read-only transcript on a page with `[avpvh_audio_transcriptie id="1"]`.
 
 ## Install for development

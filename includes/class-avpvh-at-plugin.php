@@ -236,7 +236,7 @@ final class AVPVH_AT_Plugin {
 
 		$content = wpautop(
 			esc_html__(
-				'When an authorized user starts an audio transcription, the selected recording, file metadata, transcript segments, speaker labels, group labels, and optional summary instruction are sent to the transcription service configured by this site administrator. Transcript text and up to 50 correction revisions are stored in the WordPress database. Consult the configured service provider for its retention, privacy, and deletion terms.',
+				'When an authorized user starts an audio transcription, the selected recording, file metadata, transcript segments, speaker labels, group labels, and optional summary instruction are sent to the transcription service configured by this site administrator. When a separate summary API is configured, the corrected transcript and summary instruction are sent to that API. Transcript text and up to 50 correction revisions are stored in the WordPress database. Consult the configured providers for their retention, privacy, and deletion terms.',
 				'avpvh-audio-transcriptie'
 			),
 			false
@@ -442,6 +442,11 @@ final class AVPVH_AT_Plugin {
 			'service_url'        => $settings['service_url'],
 			'license_registered' => '' !== $settings['license_key'],
 			'license_hint'       => '' !== $settings['license_key'] ? '••••' . substr( $settings['license_key'], -4 ) : '',
+			'summary_api_url'    => $settings['summary_api_url'],
+			'summary_registered' => '' !== $settings['summary_api_key'],
+			'summary_key_hint'   => '' !== $settings['summary_api_key'] ? '••••' . substr( $settings['summary_api_key'], -4 ) : '',
+			'summary_model'      => $settings['summary_model'],
+			'summary_prompt'     => $settings['summary_prompt'],
 			'provider'           => $settings['provider'],
 			'default_model'      => $settings['default_model'],
 			'default_language'   => $settings['default_language'],
@@ -458,22 +463,26 @@ final class AVPVH_AT_Plugin {
 	 * @return array|WP_Error
 	 */
 	public static function update_settings( WP_REST_Request $request ): array|WP_Error {
-		if ( defined( 'AVPVH_AT_LICENSE_KEY' ) ) {
-			return new WP_Error( 'avpvh_at_constant_key', __( 'De servicesleutel is via wp-config.php ingesteld.', 'avpvh-audio-transcriptie' ), array( 'status' => 409 ) );
-		}
-
-		$current     = self::settings();
-		$service_url = untrailingslashit( esc_url_raw( (string) $request->get_param( 'service_url' ) ) );
-		$license_key = trim( sanitize_text_field( (string) $request->get_param( 'license_key' ) ) );
-		$license_key = '' !== $license_key ? $license_key : $current['license_key'];
-		$provider    = sanitize_key( (string) $request->get_param( 'provider' ) );
-		$model       = sanitize_text_field( (string) $request->get_param( 'default_model' ) );
-		$language    = sanitize_key( (string) $request->get_param( 'default_language' ) );
-		$prompt      = sanitize_textarea_field( (string) $request->get_param( 'default_prompt' ) );
-		$glossary    = sanitize_textarea_field( (string) $request->get_param( 'default_glossary' ) );
-		$chunk       = min( 60, max( 1, absint( $request->get_param( 'chunk_minutes' ) ) ) );
+		$current        = self::settings();
+		$service_url    = untrailingslashit( esc_url_raw( (string) $request->get_param( 'service_url' ) ) );
+		$license_key    = trim( sanitize_text_field( (string) $request->get_param( 'license_key' ) ) );
+		$license_key    = '' !== $license_key ? $license_key : $current['license_key'];
+		$provider       = sanitize_key( (string) $request->get_param( 'provider' ) );
+		$model          = sanitize_text_field( (string) $request->get_param( 'default_model' ) );
+		$language       = sanitize_key( (string) $request->get_param( 'default_language' ) );
+		$prompt         = sanitize_textarea_field( (string) $request->get_param( 'default_prompt' ) );
+		$glossary       = sanitize_textarea_field( (string) $request->get_param( 'default_glossary' ) );
+		$chunk          = min( 60, max( 1, absint( $request->get_param( 'chunk_minutes' ) ) ) );
+		$summary_url    = untrailingslashit( esc_url_raw( (string) $request->get_param( 'summary_api_url' ) ) );
+		$summary_key    = trim( sanitize_text_field( (string) $request->get_param( 'summary_api_key' ) ) );
+		$summary_key    = '' !== $summary_key ? $summary_key : $current['summary_api_key'];
+		$summary_model  = sanitize_text_field( (string) $request->get_param( 'summary_model' ) );
+		$summary_prompt = sanitize_textarea_field( (string) $request->get_param( 'summary_prompt' ) );
 		if ( '' !== $service_url && ( ! wp_http_validate_url( $service_url ) || 'https' !== wp_parse_url( $service_url, PHP_URL_SCHEME ) ) ) {
 			return new WP_Error( 'avpvh_at_invalid_service_url', __( 'Gebruik een geldige HTTPS-service-URL.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
+		if ( '' !== $summary_url && ( ! wp_http_validate_url( $summary_url ) || 'https' !== wp_parse_url( $summary_url, PHP_URL_SCHEME ) ) ) {
+			return new WP_Error( 'avpvh_at_invalid_summary_url', __( 'Gebruik een geldige HTTPS-URL voor de samenvattings-API.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
 		}
 
 		update_option(
@@ -487,6 +496,10 @@ final class AVPVH_AT_Plugin {
 				'default_prompt'   => $prompt,
 				'default_glossary' => $glossary,
 				'chunk_minutes'    => $chunk,
+				'summary_api_url'  => $summary_url,
+				'summary_api_key'  => $summary_key,
+				'summary_model'    => $summary_model,
+				'summary_prompt'   => $summary_prompt,
 			),
 			false
 		);
@@ -735,15 +748,25 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function create_summary( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
-		$row    = self::get_row( absint( $request['id'] ) );
-		$remote = self::service_request(
-			'POST',
-			'/v1/jobs/' . rawurlencode( $row->service_job_id ) . '/summary',
-			array(
-				'segments' => self::decode_segments( $row->segments ),
-				'prompt'   => sanitize_textarea_field( (string) $request->get_param( 'prompt' ) ),
-			)
-		);
+		$row      = self::get_row( absint( $request['id'] ) );
+		$settings = self::settings();
+		$prompt   = sanitize_textarea_field( (string) $request->get_param( 'prompt' ) );
+		$prompt   = '' !== $prompt ? $prompt : $settings['summary_prompt'];
+
+		if ( '' !== $settings['summary_api_url'] ) {
+			$remote = self::summary_request( $settings, $prompt, self::decode_segments( $row->segments ) );
+		} elseif ( '' !== $settings['service_url'] && '' !== $settings['license_key'] ) {
+			$remote = self::service_request(
+				'POST',
+				'/v1/jobs/' . rawurlencode( $row->service_job_id ) . '/summary',
+				array(
+					'segments' => self::decode_segments( $row->segments ),
+					'prompt'   => $prompt,
+				)
+			);
+		} else {
+			return new WP_Error( 'avpvh_at_summary_not_configured', __( 'Stel onder Transcripties → Instellingen een samenvattings-API, model en eventueel API-key in.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
 
 		if ( is_wp_error( $remote ) ) {
 			return $remote;
@@ -762,6 +785,71 @@ final class AVPVH_AT_Plugin {
 		}
 
 		return $remote;
+	}
+
+	/**
+	 * Calls an OpenAI-compatible chat-completions endpoint for a summary.
+	 *
+	 * @param array  $settings Settings.
+	 * @param string $prompt   Summary instruction.
+	 * @param array  $segments Corrected transcript segments.
+	 * @return array|WP_Error
+	 */
+	private static function summary_request( array $settings, string $prompt, array $segments ): array|WP_Error {
+		if ( '' === $settings['summary_model'] ) {
+			return new WP_Error( 'avpvh_at_summary_model_missing', __( 'Kies eerst een model voor de samenvattings-API.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
+
+		$lines = array();
+		foreach ( $segments as $segment ) {
+			$label   = trim( (string) ( $segment['speaker'] ?? '' ) . ( ! empty( $segment['party'] ) ? ' (' . (string) $segment['party'] . ')' : '' ) );
+			$lines[] = '[' . self::format_time( (float) ( $segment['start'] ?? 0 ) ) . '] ' . ( $label ? $label . ': ' : '' ) . (string) ( $segment['text'] ?? '' );
+		}
+
+		$headers = array( 'Content-Type' => 'application/json' );
+		if ( '' !== $settings['summary_api_key'] ) {
+			$headers['Authorization'] = 'Bearer ' . $settings['summary_api_key'];
+		}
+		$response = wp_safe_remote_post(
+			$settings['summary_api_url'],
+			array(
+				'timeout' => 120,
+				'headers' => $headers,
+				'body'    => wp_json_encode(
+					array(
+						'model'    => $settings['summary_model'],
+						'messages' => array(
+							array(
+								'role'    => 'system',
+								'content' => $prompt ? $prompt : __( 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.', 'avpvh-audio-transcriptie' ),
+							),
+							array(
+								'role'    => 'user',
+								'content' => implode( "\n", $lines ),
+							),
+						),
+					)
+				),
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( 200 > $code || 300 <= $code ) {
+			/* translators: %d is an HTTP status code returned by the configured summary API. */
+			$message = is_array( $data ) && isset( $data['error']['message'] ) ? sanitize_text_field( $data['error']['message'] ) : sprintf( __( 'Samenvattings-API-fout (%d).', 'avpvh-audio-transcriptie' ), $code );
+			return new WP_Error( 'avpvh_at_summary_service_error', $message, array( 'status' => 502 ) );
+		}
+
+		$content = is_array( $data ) ? (string) ( $data['choices'][0]['message']['content'] ?? '' ) : '';
+		if ( '' === trim( $content ) ) {
+			return new WP_Error( 'avpvh_at_summary_empty', __( 'De samenvattings-API gaf geen tekst terug.', 'avpvh-audio-transcriptie' ), array( 'status' => 502 ) );
+		}
+
+		return array( 'summary' => wp_kses_post( wpautop( esc_html( $content ) ) ) );
 	}
 
 	/**
@@ -922,13 +1010,17 @@ final class AVPVH_AT_Plugin {
 			'default_prompt'   => sanitize_textarea_field( (string) ( $saved['default_prompt'] ?? '' ) ),
 			'default_glossary' => sanitize_textarea_field( (string) ( $saved['default_glossary'] ?? '' ) ),
 			'chunk_minutes'    => min( 60, max( 1, absint( $saved['chunk_minutes'] ?? 10 ) ) ),
+			'summary_api_url'  => untrailingslashit( (string) ( $saved['summary_api_url'] ?? '' ) ),
+			'summary_api_key'  => defined( 'AVPVH_AT_SUMMARY_API_KEY' ) ? (string) AVPVH_AT_SUMMARY_API_KEY : (string) ( $saved['summary_api_key'] ?? '' ),
+			'summary_model'    => sanitize_text_field( (string) ( $saved['summary_model'] ?? '' ) ),
+			'summary_prompt'   => sanitize_textarea_field( (string) ( $saved['summary_prompt'] ?? 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.' ) ),
 		);
 	}
 
 	/** Returns transcription defaults safe to expose to editors. */
 	private static function transcription_defaults(): array {
 		$settings = self::settings();
-		unset( $settings['service_url'], $settings['license_key'] );
+		unset( $settings['service_url'], $settings['license_key'], $settings['summary_api_key'] );
 		return $settings;
 	}
 
