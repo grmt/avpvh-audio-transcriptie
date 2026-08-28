@@ -3,6 +3,7 @@
 	'use strict';
 
 	const config = avpvhAudioTranscriptie;
+	const defaults = config.defaults || {};
 	const app = document.querySelector('#avpvh-at-app');
 	let current = null;
 	let dirty = new Set();
@@ -75,10 +76,18 @@
 					<h2>Nieuwe transcriptie</h2>
 					<div class="avpvh-at-new">
 						<label>Titel <input id="avpvh-at-title" type="text"></label>
-						<label>Model <select id="avpvh-at-model"><option>small</option><option selected>medium</option><option>large-v3-turbo</option></select></label>
+						<label>Transcriptie-engine <input id="avpvh-at-provider" type="text" value="${escapeHtml(defaults.provider || 'faster-whisper')}" list="avpvh-at-providers"><datalist id="avpvh-at-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
+						<label>Model <input id="avpvh-at-model" type="text" value="${escapeHtml(defaults.default_model || 'medium')}" list="avpvh-at-models"><datalist id="avpvh-at-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
+						<label>Taal <input id="avpvh-at-language" type="text" value="${escapeHtml(defaults.default_language || 'nl')}" size="6"></label>
+						<label>Blokgrootte (minuten) <input id="avpvh-at-chunk" type="number" min="1" max="60" value="${escapeHtml(defaults.chunk_minutes || 10)}"></label>
 						<label>Audio <input id="avpvh-at-audio" type="file" accept="audio/*"></label>
 						<button id="avpvh-at-start" type="button" class="button button-primary">Start transcriptie</button>
 					</div>
+					<details class="avpvh-at-transcription-options" open>
+						<summary>Prompt en glossary voor deze transcriptie</summary>
+						<label>Prompt <textarea id="avpvh-at-prompt" rows="5">${escapeHtml(defaults.default_prompt || '')}</textarea></label>
+						<label>Glossary <textarea id="avpvh-at-glossary" rows="5" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(defaults.default_glossary || '')}</textarea></label>
+					</details>
 					<progress id="avpvh-at-upload" max="100" value="0" hidden></progress>
 				</section>` : ''}
 				<section class="avpvh-at-card">
@@ -122,8 +131,12 @@
 					size: file.size,
 					content_type: file.type,
 					title: app.querySelector('#avpvh-at-title').value,
+					provider: app.querySelector('#avpvh-at-provider').value,
 					model: app.querySelector('#avpvh-at-model').value,
-					language: 'nl'
+					language: app.querySelector('#avpvh-at-language').value,
+					chunk_minutes: Number(app.querySelector('#avpvh-at-chunk').value),
+					prompt: app.querySelector('#avpvh-at-prompt').value,
+					glossary: app.querySelector('#avpvh-at-glossary').value
 				})
 			});
 
@@ -497,9 +510,17 @@
 			const settings = await api('settings');
 			view.innerHTML = `<section class="avpvh-at-card avpvh-at-settings">
 				<h2>Transcriptieservice</h2>
-				<p>De plugin verstuurt audio en transcriptietekst alleen naar de service die u hier zelf instelt.</p>
+				<p>De service-URL bepaalt met welke API de plugin praat. De gekozen engine, modelversie, prompt, glossary en blokgrootte worden bij iedere nieuwe opdracht aan die API meegestuurd.</p>
 				<label>Service-URL <input id="avpvh-at-url" type="url" value="${escapeHtml(settings.service_url)}" placeholder="https://service.example"></label>
 				<label>Servicesleutel <input id="avpvh-at-key" type="password" placeholder="${escapeHtml(settings.license_hint || 'Servicesleutel')}"></label>
+				<h3>Standaard transcriptie-instellingen</h3>
+				<label>Transcriptie-engine/provider <input id="avpvh-at-provider-setting" type="text" value="${escapeHtml(settings.provider)}" list="avpvh-at-setting-providers"><datalist id="avpvh-at-setting-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
+				<label>Modelversie <input id="avpvh-at-model-setting" type="text" value="${escapeHtml(settings.default_model)}" list="avpvh-at-setting-models"><datalist id="avpvh-at-setting-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
+				<label>Taalcode <input id="avpvh-at-language-setting" type="text" value="${escapeHtml(settings.default_language)}"></label>
+				<label>Blokgrootte in minuten <input id="avpvh-at-chunk-setting" type="number" min="1" max="60" value="${escapeHtml(settings.chunk_minutes)}"></label>
+				<p class="description">Advies: 10 minuten is een goed uitgangspunt voor lange gesprekken. Gebruik 5 minuten bij weinig geheugen of snelle tussentijdse resultaten; 15–20 minuten kan bij ruime capaciteit en levert meer context per blok.</p>
+				<label>Standaardprompt <textarea id="avpvh-at-prompt-setting" rows="7">${escapeHtml(settings.default_prompt)}</textarea></label>
+				<label>Standaardglossary <textarea id="avpvh-at-glossary-setting" rows="7" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(settings.default_glossary)}</textarea></label>
 				<p>Status: <strong>${settings.license_registered ? 'sleutel geregistreerd' : 'niet ingesteld'}</strong></p>
 				<button id="avpvh-at-save-settings" type="button" class="button button-primary">Opslaan en valideren</button>
 				<span id="avpvh-at-license-result" aria-live="polite"></span>
@@ -508,7 +529,16 @@
 				try {
 					await api('settings', {
 						method: 'PUT',
-						body: JSON.stringify({ service_url: view.querySelector('#avpvh-at-url').value, license_key: view.querySelector('#avpvh-at-key').value })
+						body: JSON.stringify({
+							service_url: view.querySelector('#avpvh-at-url').value,
+							license_key: view.querySelector('#avpvh-at-key').value,
+							provider: view.querySelector('#avpvh-at-provider-setting').value,
+							default_model: view.querySelector('#avpvh-at-model-setting').value,
+							default_language: view.querySelector('#avpvh-at-language-setting').value,
+							chunk_minutes: Number(view.querySelector('#avpvh-at-chunk-setting').value),
+							default_prompt: view.querySelector('#avpvh-at-prompt-setting').value,
+							default_glossary: view.querySelector('#avpvh-at-glossary-setting').value
+						})
 					});
 					const result = await api('license/validate', { method: 'POST', body: '{}' });
 					view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Sleutel geldig ✓' : ' Sleutel ongeldig';

@@ -50,6 +50,22 @@
 	min-width: 260px;
 }
 
+.avpvh-at-transcription-options {
+	margin-top: 14px;
+}
+
+.avpvh-at-transcription-options label {
+	display: grid;
+	gap: 4px;
+	max-width: 900px;
+	margin-top: 10px;
+}
+
+.avpvh-at-transcription-options textarea,
+.avpvh-at-settings textarea {
+	width: 100%;
+}
+
 #avpvh-at-upload {
 	width: 100%;
 	margin-top: 12px;

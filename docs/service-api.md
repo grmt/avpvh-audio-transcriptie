@@ -14,7 +14,23 @@ Returns:
 
 ### `POST /v1/jobs`
 
-Receives file metadata, language, and model. Returns a stable job identifier and a short-lived upload target:
+Receives file metadata and the complete transcription configuration selected in WordPress:
+
+```json
+{
+  "filename": "meeting.m4a",
+  "size": 123456,
+  "content_type": "audio/mp4",
+  "provider": "faster-whisper",
+  "language": "nl",
+  "model": "medium",
+  "prompt": "Transcribe accurately in Dutch.",
+  "glossary": "Example term, Product name",
+  "chunk_seconds": 600
+}
+```
+
+The service must use these values for that job. `prompt` and `glossary` may be empty. `chunk_seconds` is constrained by the plugin to 60–3600 seconds. The service returns a stable job identifier and a short-lived upload target:
 
 ```json
 {

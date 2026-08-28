@@ -77,7 +77,33 @@ final class AVPVH_AT_Plugin {
 		add_action( 'admin_enqueue_scripts', array( self::class, 'enqueue_assets' ) );
 		add_action( 'admin_init', array( self::class, 'add_privacy_policy_content' ) );
 		add_action( 'rest_api_init', array( self::class, 'register_routes' ) );
+		add_filter( 'rest_pre_dispatch', array( self::class, 'allow_plugin_read_routes' ), PHP_INT_MAX, 3 );
 		add_shortcode( 'avpvh_audio_transcriptie', array( self::class, 'render_shortcode' ) );
+	}
+
+	/**
+	 * Keeps this plugin's authenticated read routes available when a site-wide
+	 * content restriction blocks the complete REST API for read-only users.
+	 * The plugin's own permission callbacks still run after this filter.
+	 *
+	 * @param mixed           $result  Pre-dispatch result.
+	 * @param WP_REST_Server  $server  REST server.
+	 * @param WP_REST_Request $request Request object.
+	 * @return mixed
+	 */
+	public static function allow_plugin_read_routes( mixed $result, WP_REST_Server $server, WP_REST_Request $request ): mixed { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundBeforeLastUsed -- Required filter signature.
+		$route = $request->get_route();
+		if (
+			is_wp_error( $result )
+			&& 'rest_forbidden' === $result->get_error_code()
+			&& WP_REST_Server::READABLE === $request->get_method()
+			&& str_starts_with( $route, '/' . self::REST_NAMESPACE . '/jobs' )
+			&& self::can_read()
+		) {
+			return null;
+		}
+
+		return $result;
 	}
 
 	/**
@@ -272,6 +298,7 @@ final class AVPVH_AT_Plugin {
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
 				'canManage' => current_user_can( 'manage_options' ),
 				'canEdit'   => current_user_can( 'upload_files' ),
+				'defaults'  => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
 				'i18n'      => array(
 					'requestFailed' => esc_html__( 'De aanvraag is mislukt.', 'avpvh-audio-transcriptie' ),
 				),
@@ -415,6 +442,12 @@ final class AVPVH_AT_Plugin {
 			'service_url'        => $settings['service_url'],
 			'license_registered' => '' !== $settings['license_key'],
 			'license_hint'       => '' !== $settings['license_key'] ? '••••' . substr( $settings['license_key'], -4 ) : '',
+			'provider'           => $settings['provider'],
+			'default_model'      => $settings['default_model'],
+			'default_language'   => $settings['default_language'],
+			'default_prompt'     => $settings['default_prompt'],
+			'default_glossary'   => $settings['default_glossary'],
+			'chunk_minutes'      => $settings['chunk_minutes'],
 		);
 	}
 
@@ -433,6 +466,12 @@ final class AVPVH_AT_Plugin {
 		$service_url = untrailingslashit( esc_url_raw( (string) $request->get_param( 'service_url' ) ) );
 		$license_key = trim( sanitize_text_field( (string) $request->get_param( 'license_key' ) ) );
 		$license_key = '' !== $license_key ? $license_key : $current['license_key'];
+		$provider    = sanitize_key( (string) $request->get_param( 'provider' ) );
+		$model       = sanitize_text_field( (string) $request->get_param( 'default_model' ) );
+		$language    = sanitize_key( (string) $request->get_param( 'default_language' ) );
+		$prompt      = sanitize_textarea_field( (string) $request->get_param( 'default_prompt' ) );
+		$glossary    = sanitize_textarea_field( (string) $request->get_param( 'default_glossary' ) );
+		$chunk       = min( 60, max( 1, absint( $request->get_param( 'chunk_minutes' ) ) ) );
 		if ( '' !== $service_url && ( ! wp_http_validate_url( $service_url ) || 'https' !== wp_parse_url( $service_url, PHP_URL_SCHEME ) ) ) {
 			return new WP_Error( 'avpvh_at_invalid_service_url', __( 'Gebruik een geldige HTTPS-service-URL.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
 		}
@@ -440,8 +479,14 @@ final class AVPVH_AT_Plugin {
 		update_option(
 			'avpvh_at_settings',
 			array(
-				'service_url' => $service_url,
-				'license_key' => $license_key,
+				'service_url'      => $service_url,
+				'license_key'      => $license_key,
+				'provider'         => $provider ? $provider : $current['provider'],
+				'default_model'    => $model ? $model : $current['default_model'],
+				'default_language' => $language ? $language : $current['default_language'],
+				'default_prompt'   => $prompt,
+				'default_glossary' => $glossary,
+				'chunk_minutes'    => $chunk,
 			),
 			false
 		);
@@ -480,13 +525,18 @@ final class AVPVH_AT_Plugin {
 		$language = $request->get_param( 'language' );
 		$model    = $request->get_param( 'model' );
 		$title    = $request->get_param( 'title' );
+		$settings = self::settings();
 
 		$payload = array(
-			'filename'     => sanitize_file_name( (string) $request->get_param( 'filename' ) ),
-			'size'         => absint( $request->get_param( 'size' ) ),
-			'content_type' => sanitize_mime_type( (string) $request->get_param( 'content_type' ) ),
-			'language'     => sanitize_key( (string) ( $language ? $language : 'nl' ) ),
-			'model'        => sanitize_key( (string) ( $model ? $model : 'medium' ) ),
+			'filename'      => sanitize_file_name( (string) $request->get_param( 'filename' ) ),
+			'size'          => absint( $request->get_param( 'size' ) ),
+			'content_type'  => sanitize_mime_type( (string) $request->get_param( 'content_type' ) ),
+			'provider'      => sanitize_key( (string) ( $request->get_param( 'provider' ) ? $request->get_param( 'provider' ) : $settings['provider'] ) ),
+			'language'      => sanitize_key( (string) ( $language ? $language : $settings['default_language'] ) ),
+			'model'         => sanitize_text_field( (string) ( $model ? $model : $settings['default_model'] ) ),
+			'prompt'        => sanitize_textarea_field( (string) ( null !== $request->get_param( 'prompt' ) ? $request->get_param( 'prompt' ) : $settings['default_prompt'] ) ),
+			'glossary'      => sanitize_textarea_field( (string) ( null !== $request->get_param( 'glossary' ) ? $request->get_param( 'glossary' ) : $settings['default_glossary'] ) ),
+			'chunk_seconds' => 60 * min( 60, max( 1, absint( $request->get_param( 'chunk_minutes' ) ? $request->get_param( 'chunk_minutes' ) : $settings['chunk_minutes'] ) ) ),
 		);
 
 		if ( '' === $payload['filename'] || 1 > $payload['size'] ) {
@@ -864,9 +914,22 @@ final class AVPVH_AT_Plugin {
 	private static function settings(): array {
 		$saved = get_option( 'avpvh_at_settings', array() );
 		return array(
-			'service_url' => untrailingslashit( (string) ( $saved['service_url'] ?? '' ) ),
-			'license_key' => defined( 'AVPVH_AT_LICENSE_KEY' ) ? (string) AVPVH_AT_LICENSE_KEY : (string) ( $saved['license_key'] ?? '' ),
+			'service_url'      => untrailingslashit( (string) ( $saved['service_url'] ?? '' ) ),
+			'license_key'      => defined( 'AVPVH_AT_LICENSE_KEY' ) ? (string) AVPVH_AT_LICENSE_KEY : (string) ( $saved['license_key'] ?? '' ),
+			'provider'         => sanitize_key( (string) ( $saved['provider'] ?? 'faster-whisper' ) ),
+			'default_model'    => sanitize_text_field( (string) ( $saved['default_model'] ?? 'medium' ) ),
+			'default_language' => sanitize_key( (string) ( $saved['default_language'] ?? 'nl' ) ),
+			'default_prompt'   => sanitize_textarea_field( (string) ( $saved['default_prompt'] ?? '' ) ),
+			'default_glossary' => sanitize_textarea_field( (string) ( $saved['default_glossary'] ?? '' ) ),
+			'chunk_minutes'    => min( 60, max( 1, absint( $saved['chunk_minutes'] ?? 10 ) ) ),
 		);
+	}
+
+	/** Returns transcription defaults safe to expose to editors. */
+	private static function transcription_defaults(): array {
+		$settings = self::settings();
+		unset( $settings['service_url'], $settings['license_key'] );
+		return $settings;
 	}
 
 	/**

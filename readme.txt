@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -74,6 +74,11 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.4.0 =
+
+* Added global and per-job selection of provider, model, language, prompt, glossary, and chunk duration.
+* Kept authenticated read routes available when a site-wide content restriction blocks the REST API.
+
 = 0.3.0 =
 
 * Made the transcript list and read-only editor available to every signed-in WordPress user.
@@ -88,6 +93,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.4.0 =
+
+Configure transcription defaults and override them for each new recording.
 
 = 0.3.0 =
 
