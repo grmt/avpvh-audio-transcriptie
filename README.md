@@ -21,6 +21,7 @@ This is an early development release. The WordPress client and editor are implem
 - Play the focused fragment and navigate filtered results with the keyboard.
 - Upload audio directly to a temporary service URL rather than the public media library.
 - Request an optional summary after correction.
+- Embed a read-only transcript on a page with `[avpvh_audio_transcriptie id="1"]`.
 
 ## Install for development
 

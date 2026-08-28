@@ -11,6 +11,8 @@ cp "${project_dir}/readme.txt" "${plugin_dir}/"
 cp "${project_dir}/LICENSE" "${plugin_dir}/"
 cp "${project_dir}/assets/admin.css" "${plugin_dir}/assets/"
 cp "${project_dir}/assets/admin.js" "${plugin_dir}/assets/"
+cp "${project_dir}/assets/frontend.css" "${plugin_dir}/assets/"
+cp "${project_dir}/assets/frontend.js" "${plugin_dir}/assets/"
 cp "${project_dir}/includes/class-avpvh-at-plugin.php" "${plugin_dir}/includes/"
 
 if command -v zip >/dev/null 2>&1; then

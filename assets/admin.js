@@ -188,6 +188,7 @@
 					${current.audio_url ? `<audio id="avpvh-at-player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : ''}
 				</div>
 				<div class="avpvh-at-actions">
+					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
 					<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>
 					<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
 					<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>
@@ -206,6 +207,15 @@
 			renderJobList();
 		});
 		view.querySelector('#avpvh-at-insert').addEventListener('click', insertSegment);
+		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
+			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
+			try {
+				await navigator.clipboard.writeText(shortcode);
+				setSaveState('Shortcode gekopieerd');
+			} catch (error) {
+				window.prompt('Kopieer deze shortcode:', shortcode);
+			}
+		});
 		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
 		view.querySelector('#avpvh-at-summary').addEventListener('click', createSummary);
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
@@ -241,12 +251,28 @@
 				scheduleSave();
 			};
 			text.addEventListener('input', change);
-			speaker.addEventListener('input', change);
+			speaker.addEventListener('input', () => {
+				const inferred = inferredParty(speaker.value);
+				if (inferred) {
+					party.value = inferred;
+				}
+				change();
+			});
 			party.addEventListener('input', change);
 			row.addEventListener('mousedown', () => setFocus(id, false));
 			row.addEventListener('focusin', () => setFocus(id, false));
 			row.querySelector('.avpvh-at-time').addEventListener('click', () => playSegment(id));
 		});
+	}
+
+	function inferredParty(speaker) {
+		const counts = new Map();
+		current.segments.forEach((segment) => {
+			if (segment.speaker === speaker && segment.party) {
+				counts.set(segment.party, (counts.get(segment.party) || 0) + 1);
+			}
+		});
+		return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || '';
 	}
 
 	function setFocus(id, scroll = true) {

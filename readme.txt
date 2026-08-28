@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,7 @@ The administrator chooses and controls the service endpoint. This project does n
 * Speaker and group labels derived from the current transcript, with no built-in identities.
 * Keyboard playback: Space outside form controls or Control+Space anywhere.
 * Optional service-generated summary.
+* Read-only page embedding with `[avpvh_audio_transcriptie id="1"]`.
 
 == Installation ==
 
@@ -73,11 +74,19 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.2.0 =
+
+* Added a read-only frontend shortcode with audio, search, speaker filters, and group filters.
+
 = 0.1.0 =
 
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.2.0 =
+
+Adds the frontend transcript shortcode.
 
 = 0.1.0 =
 

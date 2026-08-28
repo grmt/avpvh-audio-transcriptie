@@ -77,6 +77,125 @@ final class AVPVH_AT_Plugin {
 		add_action( 'admin_enqueue_scripts', array( self::class, 'enqueue_assets' ) );
 		add_action( 'admin_init', array( self::class, 'add_privacy_policy_content' ) );
 		add_action( 'rest_api_init', array( self::class, 'register_routes' ) );
+		add_shortcode( 'avpvh_audio_transcriptie', array( self::class, 'render_shortcode' ) );
+	}
+
+	/**
+	 * Renders a read-only transcript with audio, search and label filters.
+	 *
+	 * Adding the shortcode to a page intentionally publishes that transcript to
+	 * everyone who can view the page. Page-level access restrictions remain in
+	 * control of WordPress and any access-control plugin used by the site.
+	 *
+	 * @param array|string $attributes Shortcode attributes.
+	 * @return string
+	 */
+	public static function render_shortcode( array|string $attributes ): string {
+		$attributes = shortcode_atts(
+			array( 'id' => 0 ),
+			is_array( $attributes ) ? $attributes : array(),
+			'avpvh_audio_transcriptie'
+		);
+		$job_id     = absint( $attributes['id'] );
+		$row        = self::get_row( $job_id );
+		if ( null === $row ) {
+			return '<p>' . esc_html__( 'Transcriptie niet gevonden.', 'avpvh-audio-transcriptie' ) . '</p>';
+		}
+
+		$segments = self::decode_segments( $row->segments );
+		$speakers = array();
+		$parties  = array();
+		foreach ( $segments as $segment ) {
+			$speaker = sanitize_text_field( (string) ( $segment['speaker'] ?? '' ) );
+			$party   = sanitize_text_field( (string) ( $segment['party'] ?? '' ) );
+			if ( '' !== $speaker ) {
+				$speakers[ $speaker ] = true;
+			}
+			if ( '' !== $party ) {
+				$parties[ $party ] = true;
+			}
+		}
+		ksort( $speakers, SORT_NATURAL | SORT_FLAG_CASE );
+		ksort( $parties, SORT_NATURAL | SORT_FLAG_CASE );
+
+		wp_enqueue_style( 'avpvh-at-frontend', AVPVH_AT_URL . 'assets/frontend.css', array(), AVPVH_AT_VERSION );
+		wp_enqueue_script( 'avpvh-at-frontend', AVPVH_AT_URL . 'assets/frontend.js', array(), AVPVH_AT_VERSION, true );
+
+		$instance = wp_unique_id( 'avpvh-at-public-' );
+		ob_start();
+		?>
+		<section id="<?php echo esc_attr( $instance ); ?>" class="avpvh-at-public" data-job-id="<?php echo esc_attr( (string) $job_id ); ?>">
+			<header class="avpvh-at-public-header">
+				<h2><?php echo esc_html( $row->title ); ?></h2>
+				<p class="avpvh-at-public-summary">
+					<?php
+					echo esc_html(
+						sprintf(
+							/* translators: %1$d is a segment count, %2$s is a duration. */
+							__( '%1$d fragmenten · %2$s', 'avpvh-audio-transcriptie' ),
+							count( $segments ),
+							self::format_time( (float) $row->duration )
+						)
+					);
+					?>
+				</p>
+				<?php if ( '' !== (string) $row->audio_url ) : ?>
+					<audio class="avpvh-at-public-player" controls preload="metadata" src="<?php echo esc_url( $row->audio_url ); ?>"></audio>
+				<?php endif; ?>
+				<div class="avpvh-at-public-controls">
+					<label>
+						<span><?php echo esc_html__( 'Zoeken', 'avpvh-audio-transcriptie' ); ?></span>
+						<input class="avpvh-at-public-search" type="search" placeholder="<?php echo esc_attr__( 'Zoeken in uitspraken…', 'avpvh-audio-transcriptie' ); ?>">
+					</label>
+					<label>
+						<span><?php echo esc_html__( 'Spreker', 'avpvh-audio-transcriptie' ); ?></span>
+						<select class="avpvh-at-public-speaker">
+							<option value=""><?php echo esc_html__( 'Alle sprekers', 'avpvh-audio-transcriptie' ); ?></option>
+							<?php foreach ( array_keys( $speakers ) as $speaker ) : ?>
+								<option value="<?php echo esc_attr( $speaker ); ?>"><?php echo esc_html( $speaker ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+					<label>
+						<span><?php echo esc_html__( 'Partij', 'avpvh-audio-transcriptie' ); ?></span>
+						<select class="avpvh-at-public-party">
+							<option value=""><?php echo esc_html__( 'Alle partijen', 'avpvh-audio-transcriptie' ); ?></option>
+							<?php foreach ( array_keys( $parties ) as $party ) : ?>
+								<option value="<?php echo esc_attr( $party ); ?>"><?php echo esc_html( $party ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+				</div>
+			</header>
+			<div class="avpvh-at-public-segments">
+				<?php foreach ( $segments as $segment ) : ?>
+					<?php
+					$speaker    = sanitize_text_field( (string) ( $segment['speaker'] ?? '' ) );
+					$party      = sanitize_text_field( (string) ( $segment['party'] ?? '' ) );
+					$text       = sanitize_textarea_field( (string) ( $segment['text'] ?? '' ) );
+					$searchable = $speaker . ' ' . $party . ' ' . $text;
+					?>
+					<article class="avpvh-at-public-segment" data-start="<?php echo esc_attr( (string) (float) ( $segment['start'] ?? 0 ) ); ?>" data-speaker="<?php echo esc_attr( $speaker ); ?>" data-party="<?php echo esc_attr( $party ); ?>" data-search="<?php echo esc_attr( $searchable ); ?>">
+						<button type="button" class="avpvh-at-public-time"><?php echo esc_html( self::format_time( (float) ( $segment['start'] ?? 0 ) ) ); ?></button>
+						<div>
+							<?php if ( '' !== $speaker || '' !== $party ) : ?>
+								<p class="avpvh-at-public-labels">
+									<?php if ( '' !== $speaker ) : ?>
+										<span><?php echo esc_html( $speaker ); ?></span>
+									<?php endif; ?>
+									<?php if ( '' !== $party ) : ?>
+										<span class="is-party"><?php echo esc_html( $party ); ?></span>
+									<?php endif; ?>
+								</p>
+							<?php endif; ?>
+							<p class="avpvh-at-public-text"><?php echo nl2br( esc_html( $text ) ); ?></p>
+						</div>
+					</article>
+				<?php endforeach; ?>
+			</div>
+		</section>
+		<?php
+		return (string) ob_get_clean();
 	}
 
 	/**
@@ -837,6 +956,22 @@ final class AVPVH_AT_Plugin {
 			$clean[ sanitize_key( (string) $name ) ] = sanitize_text_field( (string) $value );
 		}
 		return $clean;
+	}
+
+	/**
+	 * Formats seconds as a continuous timestamp.
+	 *
+	 * @param float $seconds Number of seconds.
+	 * @return string
+	 */
+	private static function format_time( float $seconds ): string {
+		$seconds = max( 0, (int) floor( $seconds ) );
+		return sprintf(
+			'%02d:%02d:%02d',
+			(int) floor( $seconds / 3600 ),
+			(int) floor( ( $seconds % 3600 ) / 60 ),
+			$seconds % 60
+		);
 	}
 
 	/** Returns the jobs table name. */
