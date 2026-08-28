@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.5.0
+Stable tag: 0.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,12 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.6.0 =
+
+* Create or update a live WordPress transcript page from the editor.
+* Optionally place the published page in a selected navigation menu and below an existing menu item.
+* Focus and scroll to the first matching transcript segment while searching.
+
 = 0.5.0 =
 
 * Keep the focused transcript segment synchronized with audio playback.
@@ -106,6 +112,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.6.0 =
+
+Adds guided WordPress page publication, menu placement, and clearer transcript search behavior.
 
 = 0.5.0 =
 

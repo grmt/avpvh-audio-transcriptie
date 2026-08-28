@@ -24,6 +24,7 @@ This is an early development release. The WordPress client and editor are implem
 - Request an optional summary after correction.
 - Configure a separate OpenAI-compatible LLM endpoint for summaries.
 - Export a corrected transcript as a standalone interactive HTML file.
+- Create or update a live WordPress transcript page and optionally place it in a chosen navigation menu.
 - Embed a read-only transcript on a page with `[avpvh_audio_transcriptie id="1"]`.
 
 ## Install for development

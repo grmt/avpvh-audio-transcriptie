@@ -203,6 +203,7 @@
 				<div class="avpvh-at-actions">
 					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
 					<button id="avpvh-at-export-html" type="button" class="button">Exporteer HTML</button>
+					${config.canPublish ? '<button id="avpvh-at-publish-page" type="button" class="button button-primary">Publiceer als pagina</button>' : ''}
 					${config.canEdit ? '<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>' : ''}
 					${config.canEdit ? '<button id="avpvh-at-delete" type="button" class="button">Zin verwijderen</button>' : ''}
 					<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
@@ -213,6 +214,7 @@
 			<datalist id="avpvh-at-speakers">${speakers.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
 			<datalist id="avpvh-at-parties">${parties.map((value) => `<option value="${escapeHtml(value)}">`).join('')}</datalist>
 			<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
+			<div id="avpvh-at-publish-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-history-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>`;
 
@@ -224,6 +226,7 @@
 		view.querySelector('#avpvh-at-insert')?.addEventListener('click', insertSegment);
 		view.querySelector('#avpvh-at-delete')?.addEventListener('click', deleteSegment);
 		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
+		view.querySelector('#avpvh-at-publish-page')?.addEventListener('click', renderPublishPanel);
 		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
 			try {
@@ -443,15 +446,78 @@
 
 	function filterRows(event) {
 		const query = event.target.value.trim().toLocaleLowerCase();
-		let visible = 0;
+		const visibleRows = [];
 		app.querySelectorAll('.avpvh-at-segment').forEach((row) => {
 			const segment = current.segments.find((item) => item.id === row.dataset.id);
 			row.hidden = Boolean(query) && !`${segment.text} ${segment.speaker} ${segment.party}`.toLocaleLowerCase().includes(query);
-			visible += row.hidden ? 0 : 1;
+			if (!row.hidden) {
+				visibleRows.push(row);
+			}
 		});
-		app.querySelector('#avpvh-at-count').textContent = query ? `${visible} resultaat/resultaten` : '';
-		if (query && !app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(focusedId)}"]:not([hidden])`)) {
-			setFocus(app.querySelector('.avpvh-at-segment:not([hidden])')?.dataset.id || null, false);
+		app.querySelector('#avpvh-at-count').textContent = query ? (visibleRows.length ? `${visibleRows.length} resultaat/resultaten` : 'Geen resultaten') : '';
+		if (query) {
+			setFocus(visibleRows[0]?.dataset.id || null, true);
+		}
+	}
+
+	async function renderPublishPanel() {
+		const panel = app.querySelector('#avpvh-at-publish-panel');
+		if (!panel.hidden) {
+			panel.hidden = true;
+			return;
+		}
+		panel.hidden = false;
+		panel.innerHTML = '<p class="avpvh-at-loading">Publicatieopties laden<span></span></p>';
+		try {
+			const options = await api(`publishing-options?job_id=${current.id}`);
+			const existing = options.existing_page;
+			panel.innerHTML = `<h3>${existing ? 'Transcriptiepagina bijwerken' : 'Transcriptiepagina maken'}</h3>
+				<p>De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.</p>
+				<label>Paginatitel <input id="avpvh-at-page-title" type="text" value="${escapeHtml(existing?.title || current.title)}"></label>
+				<label>Status <select id="avpvh-at-page-status"><option value="draft" ${'publish' !== existing?.status ? 'selected' : ''}>Concept</option><option value="publish" ${'publish' === existing?.status ? 'selected' : ''}>Gepubliceerd</option></select></label>
+				<label>WordPress-menu <select id="avpvh-at-page-menu"><option value="0">Niet toevoegen / huidige menuplaats behouden</option>${options.menus.map((menu) => `<option value="${menu.id}" ${menu.id === existing?.menu_id ? 'selected' : ''}>${escapeHtml(menu.name)}</option>`).join('')}</select></label>
+				<label>Onder bestaand menu-item <select id="avpvh-at-page-parent"><option value="0">Op hoofdniveau</option></select></label>
+				<p class="description">Kies Gepubliceerd om de pagina voor bezoekers bereikbaar te maken. Menuplaatsing vereist het WordPress-recht om menu’s te wijzigen.</p>
+				<button id="avpvh-at-page-create" type="button" class="button button-primary">${existing ? 'Pagina bijwerken' : 'Pagina maken'}</button>
+				<span id="avpvh-at-page-result" aria-live="polite"></span>`;
+
+			const menu = panel.querySelector('#avpvh-at-page-menu');
+			const parent = panel.querySelector('#avpvh-at-page-parent');
+			const status = panel.querySelector('#avpvh-at-page-status');
+			const updateParents = () => {
+				const selected = options.menus.find((item) => item.id === Number(menu.value));
+				parent.innerHTML = '<option value="0">Op hoofdniveau</option>' + (selected?.items || []).filter((item) => item.id !== existing?.menu_item).map((item) => `<option value="${item.id}" ${item.id === existing?.parent_item ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
+				const menuAllowed = 'publish' === status.value && options.can_manage_menus;
+				menu.disabled = !menuAllowed;
+				parent.disabled = !menuAllowed || '0' === menu.value;
+			};
+			menu.addEventListener('change', updateParents);
+			status.addEventListener('change', updateParents);
+			updateParents();
+
+			panel.querySelector('#avpvh-at-page-create').addEventListener('click', async () => {
+				const button = panel.querySelector('#avpvh-at-page-create');
+				const resultText = panel.querySelector('#avpvh-at-page-result');
+				button.disabled = true;
+				resultText.textContent = ' Pagina opslaan…';
+				try {
+					const result = await api(`jobs/${current.id}/publish`, {
+						method: 'POST',
+						body: JSON.stringify({
+							title: panel.querySelector('#avpvh-at-page-title').value,
+							status: status.value,
+							menu_id: 'publish' === status.value ? Number(menu.value) : 0,
+							parent_item_id: 'publish' === status.value ? Number(parent.value) : 0
+						})
+					});
+					resultText.innerHTML = ` Opgeslagen. <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">Bekijk pagina</a> · <a href="${escapeHtml(result.edit_url)}">Bewerk in WordPress</a>`;
+				} catch (error) {
+					resultText.textContent = ` ${error.message}`;
+					button.disabled = false;
+				}
+			});
+		} catch (error) {
+			panel.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
 		}
 	}
 

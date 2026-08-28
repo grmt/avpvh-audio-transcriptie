@@ -294,12 +294,13 @@ final class AVPVH_AT_Plugin {
 			'avpvh-at-admin',
 			'avpvhAudioTranscriptie',
 			array(
-				'root'      => esc_url_raw( rest_url( self::REST_NAMESPACE . '/' ) ),
-				'nonce'     => wp_create_nonce( 'wp_rest' ),
-				'canManage' => current_user_can( 'manage_options' ),
-				'canEdit'   => current_user_can( 'upload_files' ),
-				'defaults'  => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
-				'i18n'      => array(
+				'root'       => esc_url_raw( rest_url( self::REST_NAMESPACE . '/' ) ),
+				'nonce'      => wp_create_nonce( 'wp_rest' ),
+				'canManage'  => current_user_can( 'manage_options' ),
+				'canEdit'    => current_user_can( 'upload_files' ),
+				'canPublish' => current_user_can( 'publish_pages' ),
+				'defaults'   => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
+				'i18n'       => array(
 					'requestFailed' => esc_html__( 'De aanvraag is mislukt.', 'avpvh-audio-transcriptie' ),
 				),
 			)
@@ -336,6 +337,16 @@ final class AVPVH_AT_Plugin {
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( self::class, 'validate_license' ),
 				'permission_callback' => array( self::class, 'can_manage' ),
+			)
+		);
+
+		register_rest_route(
+			self::REST_NAMESPACE,
+			'/publishing-options',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( self::class, 'publishing_options' ),
+				'permission_callback' => array( self::class, 'can_publish' ),
 			)
 		);
 
@@ -398,6 +409,22 @@ final class AVPVH_AT_Plugin {
 				),
 			)
 		);
+
+		register_rest_route(
+			self::REST_NAMESPACE,
+			'/jobs/(?P<id>\d+)/publish',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( self::class, 'publish_page' ),
+				'permission_callback' => array( self::class, 'can_publish_job' ),
+				'args'                => array(
+					'id' => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+				),
+			)
+		);
 	}
 
 	/** Whether the user may manage settings. */
@@ -408,6 +435,11 @@ final class AVPVH_AT_Plugin {
 	/** Whether the user may create jobs. */
 	public static function can_upload(): bool {
 		return current_user_can( 'upload_files' );
+	}
+
+	/** Whether the user may publish WordPress pages. */
+	public static function can_publish(): bool {
+		return current_user_can( 'publish_pages' );
 	}
 
 	/** Whether the signed-in user may view transcripts. */
@@ -433,6 +465,16 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function can_edit_job( WP_REST_Request $request ): bool {
 		return self::can_upload() && null !== self::get_row( absint( $request['id'] ) );
+	}
+
+	/**
+	 * Whether the user may publish an existing transcript as a page.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return bool
+	 */
+	public static function can_publish_job( WP_REST_Request $request ): bool {
+		return self::can_publish() && null !== self::get_row( absint( $request['id'] ) );
 	}
 
 	/** Returns public settings without exposing the secret. */
@@ -705,6 +747,137 @@ final class AVPVH_AT_Plugin {
 		return $wpdb->get_results(
 			$wpdb->prepare( "SELECT id, revision, user_id, created_at FROM {$table} WHERE job_id = %d ORDER BY id DESC LIMIT %d", absint( $request['id'] ), self::MAX_REVISIONS ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 			ARRAY_A
+		);
+	}
+
+	/**
+	 * Returns menus and existing page information for the publish dialog.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return array
+	 */
+	public static function publishing_options( WP_REST_Request $request ): array {
+		$job_id             = absint( $request->get_param( 'job_id' ) );
+		$page_id            = self::published_page_id( $job_id );
+		$menus              = array();
+		$existing_menu_item = $page_id ? absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) ) : 0;
+		$existing_menu_ids  = $existing_menu_item ? wp_get_object_terms( $existing_menu_item, 'nav_menu', array( 'fields' => 'ids' ) ) : array();
+
+		if ( current_user_can( 'edit_theme_options' ) ) {
+			foreach ( wp_get_nav_menus() as $menu ) {
+				$items      = array();
+				$menu_items = wp_get_nav_menu_items( $menu->term_id );
+				foreach ( is_array( $menu_items ) ? $menu_items : array() as $item ) {
+					$items[] = array(
+						'id'     => (int) $item->ID,
+						'title'  => wp_strip_all_tags( (string) $item->title ),
+						'parent' => (int) $item->menu_item_parent,
+					);
+				}
+				$menus[] = array(
+					'id'    => (int) $menu->term_id,
+					'name'  => sanitize_text_field( (string) $menu->name ),
+					'items' => $items,
+				);
+			}
+		}
+
+		return array(
+			'menus'            => $menus,
+			'can_manage_menus' => current_user_can( 'edit_theme_options' ),
+			'existing_page'    => $page_id ? array(
+				'id'          => $page_id,
+				'title'       => get_the_title( $page_id ),
+				'status'      => get_post_status( $page_id ),
+				'url'         => get_permalink( $page_id ),
+				'edit_url'    => get_edit_post_link( $page_id, 'raw' ),
+				'menu_item'   => $existing_menu_item,
+				'menu_id'     => ! is_wp_error( $existing_menu_ids ) && $existing_menu_ids ? (int) $existing_menu_ids[0] : 0,
+				'parent_item' => $existing_menu_item ? absint( get_post_meta( $existing_menu_item, '_menu_item_menu_item_parent', true ) ) : 0,
+			) : null,
+		);
+	}
+
+	/**
+	 * Creates or updates a WordPress page and optionally places it in a menu.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return array|WP_Error
+	 */
+	public static function publish_page( WP_REST_Request $request ): array|WP_Error {
+		$job_id   = absint( $request['id'] );
+		$job      = self::get_row( $job_id );
+		$page_id  = self::published_page_id( $job_id );
+		$title    = sanitize_text_field( (string) $request->get_param( 'title' ) );
+		$status   = 'publish' === $request->get_param( 'status' ) ? 'publish' : 'draft';
+		$menu_id  = absint( $request->get_param( 'menu_id' ) );
+		$parent   = absint( $request->get_param( 'parent_item_id' ) );
+		$postdata = array(
+			'post_title'   => '' !== $title ? $title : $job->title,
+			'post_content' => sprintf( '[avpvh_audio_transcriptie id="%d"]', $job_id ),
+			'post_status'  => $status,
+			'post_type'    => 'page',
+		);
+		if ( $page_id ) {
+			$postdata['ID'] = $page_id;
+		}
+
+		$page_id = wp_insert_post( wp_slash( $postdata ), true );
+		if ( is_wp_error( $page_id ) ) {
+			return $page_id;
+		}
+		update_post_meta( $page_id, '_avpvh_at_job_id', $job_id );
+
+		$menu_item_id = absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) );
+		if ( $menu_id ) {
+			if ( ! current_user_can( 'edit_theme_options' ) ) {
+				return new WP_Error( 'avpvh_at_menu_forbidden', __( 'Je mag geen WordPress-menu wijzigen.', 'avpvh-audio-transcriptie' ), array( 'status' => 403 ) );
+			}
+			if ( 'publish' !== $status ) {
+				return new WP_Error( 'avpvh_at_menu_requires_publish', __( 'Publiceer de pagina voordat je deze aan een menu toevoegt.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+			}
+			$menu = wp_get_nav_menu_object( $menu_id );
+			if ( ! $menu ) {
+				return new WP_Error( 'avpvh_at_menu_missing', __( 'Het gekozen menu bestaat niet meer.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
+			}
+			if ( $parent ) {
+				$valid_parent = false;
+				$menu_items   = wp_get_nav_menu_items( $menu_id );
+				foreach ( is_array( $menu_items ) ? $menu_items : array() as $item ) {
+					if ( $parent === (int) $item->ID ) {
+						$valid_parent = true;
+						break;
+					}
+				}
+				if ( ! $valid_parent ) {
+					return new WP_Error( 'avpvh_at_parent_missing', __( 'Het gekozen bovenliggende menu-item hoort niet bij dit menu.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+				}
+			}
+
+			$menu_item_id = wp_update_nav_menu_item(
+				$menu_id,
+				$menu_item_id,
+				array(
+					'menu-item-object-id' => $page_id,
+					'menu-item-object'    => 'page',
+					'menu-item-parent-id' => $parent,
+					'menu-item-status'    => 'publish',
+					'menu-item-title'     => get_the_title( $page_id ),
+					'menu-item-type'      => 'post_type',
+				)
+			);
+			if ( is_wp_error( $menu_item_id ) ) {
+				return $menu_item_id;
+			}
+			update_post_meta( $page_id, '_avpvh_at_menu_item_id', $menu_item_id );
+		}
+
+		return array(
+			'page_id'      => (int) $page_id,
+			'status'       => get_post_status( $page_id ),
+			'url'          => get_permalink( $page_id ),
+			'edit_url'     => get_edit_post_link( $page_id, 'raw' ),
+			'menu_item_id' => (int) $menu_item_id,
 		);
 	}
 
@@ -1022,6 +1195,29 @@ final class AVPVH_AT_Plugin {
 		$settings = self::settings();
 		unset( $settings['service_url'], $settings['license_key'], $settings['summary_api_key'] );
 		return $settings;
+	}
+
+	/**
+	 * Finds the WordPress page previously linked to a transcript.
+	 *
+	 * @param int $job_id Transcript job ID.
+	 * @return int
+	 */
+	private static function published_page_id( int $job_id ): int {
+		if ( 1 > $job_id ) {
+			return 0;
+		}
+		$pages = get_posts(
+			array(
+				'post_type'      => 'page',
+				'post_status'    => array( 'draft', 'pending', 'private', 'publish' ),
+				'posts_per_page' => 1,
+				'fields'         => 'ids',
+				'meta_key'       => '_avpvh_at_job_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- A single administrative lookup for one managed page.
+				'meta_value'     => $job_id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value -- A single administrative lookup for one managed page.
+			)
+		);
+		return $pages ? (int) $pages[0] : 0;
 	}
 
 	/**
