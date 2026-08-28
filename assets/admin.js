@@ -194,22 +194,25 @@
 		view.innerHTML = `
 			<header class="avpvh-at-editor-head">
 				<button id="avpvh-at-back" type="button" class="button">← Overzicht</button>
-				<div>
-					<h2>${escapeHtml(current.title)}</h2>
+				<div class="avpvh-at-editor-main">
+					<h2>${config.canEdit ? `<button id="avpvh-at-rename" type="button" class="avpvh-at-title-button" title="Naam wijzigen">${escapeHtml(current.title)}</button>` : escapeHtml(current.title)}</h2>
 					<div><span id="avpvh-at-status">${escapeHtml(current.status)}</span> · <span id="avpvh-at-percent">${Math.round(current.progress)}%</span> <span id="avpvh-at-save-state" aria-live="polite"></span></div>
 					<progress id="avpvh-at-progress" max="100" value="${current.progress}"></progress>
 					${current.audio_url ? `<audio id="avpvh-at-player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : ''}
 				</div>
 				<div class="avpvh-at-actions">
-					${config.canEdit ? '<button id="avpvh-at-rename" type="button" class="button">Naam wijzigen</button>' : ''}
-					<button id="avpvh-at-storage" type="button" class="button">Bestanden &amp; opslag</button>
-					<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode kopiëren</button>
-					<button id="avpvh-at-export-html" type="button" class="button">Exporteer HTML</button>
-					<button id="avpvh-at-export-markdown" type="button" class="button">Exporteer Markdown</button>
-					${config.canPublish ? '<button id="avpvh-at-publish-page" type="button" class="button button-primary">Publiceer als pagina</button>' : ''}
-					${config.canEdit ? '<button id="avpvh-at-insert" type="button" class="button">Zin toevoegen</button>' : ''}
-					${config.canEdit ? '<button id="avpvh-at-delete" type="button" class="button">Zin verwijderen</button>' : ''}
-					<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
+					<details class="avpvh-at-action-menu"><summary class="button">Transcriptie</summary><div>
+						<button id="avpvh-at-storage" type="button" class="button">Bestanden &amp; opslag</button>
+						<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
+					</div></details>
+					<details class="avpvh-at-action-menu"><summary class="button">Exporteren</summary><div>
+						<button id="avpvh-at-export-html" type="button" class="button">HTML-bestand</button>
+						<button id="avpvh-at-export-markdown" type="button" class="button">Markdown-tabel</button>
+					</div></details>
+					<details class="avpvh-at-action-menu"><summary class="button">Op pagina zetten</summary><div>
+						<button id="avpvh-at-copy-shortcode" type="button" class="button">Shortcode bekijken</button>
+						${config.canPublish ? '<button id="avpvh-at-publish-page" type="button" class="button">WordPress-pagina maken</button>' : ''}
+					</div></details>
 					${config.canEdit ? '<button id="avpvh-at-summary" type="button" class="button button-primary">Samenvatting</button>' : ''}
 				</div>
 			</header>
@@ -229,20 +232,19 @@
 			clearTimeout(pollTimer);
 			renderJobList();
 		});
-		view.querySelector('#avpvh-at-insert')?.addEventListener('click', insertSegment);
 		view.querySelector('#avpvh-at-rename')?.addEventListener('click', renderRenamePanel);
 		view.querySelector('#avpvh-at-storage').addEventListener('click', renderStoragePanel);
-		view.querySelector('#avpvh-at-delete')?.addEventListener('click', deleteSegment);
 		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
 		view.querySelector('#avpvh-at-export-markdown').addEventListener('click', exportMarkdown);
-		view.querySelector('#avpvh-at-publish-page')?.addEventListener('click', renderPublishPanel);
+		view.querySelector('#avpvh-at-publish-page')?.addEventListener('click', () => renderPublishPanel());
 		view.querySelector('#avpvh-at-copy-shortcode').addEventListener('click', async () => {
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
+			renderPublishPanel(true);
 			try {
 				await navigator.clipboard.writeText(shortcode);
 				setSaveState('Shortcode gekopieerd');
 			} catch (error) {
-				window.prompt('Kopieer deze shortcode:', shortcode);
+				setSaveState('Selecteer en kopieer de shortcode hieronder');
 			}
 		});
 		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
@@ -257,15 +259,21 @@
 		return [...new Set(segments.map((segment) => segment[field]).filter(Boolean))].sort((left, right) => left.localeCompare(right));
 	}
 
+	function revealPanel(panel) {
+		panel.hidden = false;
+		requestAnimationFrame(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+	}
+
 	function renderRenamePanel() {
 		const panel = app.querySelector('#avpvh-at-rename-panel');
 		if (!panel.hidden) {
 			panel.hidden = true;
 			return;
 		}
-		panel.hidden = false;
+		revealPanel(panel);
 		panel.innerHTML = `<h3>Naam wijzigen</h3>
 			<label>Naam transcriptie <input id="avpvh-at-new-title" type="text" value="${escapeHtml(current.title)}"></label>
+			<p class="description">Dit wijzigt de naam in WordPress en in nieuwe exports. Het oorspronkelijke audiobestand en eerder gemaakte TXT-, SRT- en audiofragmentbestanden worden niet hernoemd: die bestanden staan buiten de beheerde transcriptiedatabase.</p>
 			<button id="avpvh-at-save-title" type="button" class="button button-primary">Naam opslaan</button>
 			<span id="avpvh-at-title-result" aria-live="polite"></span>`;
 		panel.querySelector('#avpvh-at-save-title').addEventListener('click', async () => {
@@ -280,7 +288,7 @@
 					method: 'PUT',
 					body: JSON.stringify({ title })
 				});
-				app.querySelector('.avpvh-at-editor-head h2').textContent = current.title;
+				app.querySelector('.avpvh-at-title-button').textContent = current.title;
 				result.textContent = ' Naam opgeslagen.';
 			} catch (error) {
 				result.textContent = ` ${error.message}`;
@@ -294,7 +302,7 @@
 			panel.hidden = true;
 			return;
 		}
-		panel.hidden = false;
+		revealPanel(panel);
 		panel.innerHTML = `<h3>Bestanden en opslag</h3>
 			<dl class="avpvh-at-storage-list">
 				<dt>Audio</dt><dd>${current.audio_url ? `<a href="${escapeHtml(current.audio_url)}" target="_blank" rel="noopener">${escapeHtml(current.audio_name || current.audio_url)}</a>` : escapeHtml(current.audio_name || 'Geen audiolocatie beschikbaar')}</dd>
@@ -311,6 +319,7 @@
 			<label><span>Partij</span><input class="avpvh-at-party" type="text" list="avpvh-at-parties" value="${escapeHtml(segment.party)}" ${config.canEdit ? '' : 'disabled'}></label>
 			<label><span>Spreker</span><input class="avpvh-at-speaker" type="text" list="avpvh-at-speakers" value="${escapeHtml(segment.speaker)}" ${config.canEdit ? '' : 'disabled'}></label>
 			<label class="avpvh-at-text"><span>Transcriptie</span><textarea ${config.canEdit ? '' : 'readonly'}>${escapeHtml(segment.text)}</textarea></label>
+			${config.canEdit ? '<div class="avpvh-at-row-actions"><button type="button" class="button avpvh-at-insert-row" title="Zin na dit fragment toevoegen" aria-label="Zin na dit fragment toevoegen">+</button><button type="button" class="button avpvh-at-delete-row" title="Deze zin verwijderen" aria-label="Deze zin verwijderen">−</button></div>' : ''}
 		</article>`;
 	}
 
@@ -338,6 +347,29 @@
 					change();
 				});
 				party.addEventListener('input', change);
+				row.querySelector('.avpvh-at-insert-row').addEventListener('mousedown', (event) => event.preventDefault());
+				row.querySelector('.avpvh-at-insert-row').addEventListener('click', () => {
+					setFocus(id, false);
+					insertSegment();
+				});
+				const deleteButton = row.querySelector('.avpvh-at-delete-row');
+				deleteButton.addEventListener('click', () => {
+					setFocus(id, false);
+					if ('yes' !== deleteButton.dataset.confirm) {
+						deleteButton.dataset.confirm = 'yes';
+						deleteButton.textContent = 'Zeker?';
+						deleteButton.title = 'Klik nogmaals om deze zin te verwijderen';
+						setTimeout(() => {
+							if (deleteButton.isConnected) {
+								deleteButton.dataset.confirm = '';
+								deleteButton.textContent = '−';
+								deleteButton.title = 'Deze zin verwijderen';
+							}
+						}, 3000);
+						return;
+					}
+					deleteSegment();
+				});
 			}
 			row.addEventListener('mousedown', () => setFocus(id, false));
 			row.addEventListener('focusin', () => setFocus(id, false));
@@ -469,9 +501,6 @@
 			notice('Kies eerst de zin die je wilt verwijderen.', 'warning');
 			return;
 		}
-		if (!window.confirm('Deze zin verwijderen? Je kunt dit later via Geschiedenis terugzetten.')) {
-			return;
-		}
 		const nextFocus = current.segments[index + 1]?.id || current.segments[index - 1]?.id || null;
 		current.segments.splice(index, 1);
 		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(focusedId)}"]`)?.remove();
@@ -534,22 +563,26 @@
 		}
 	}
 
-	async function renderPublishPanel() {
+	async function renderPublishPanel(shortcodeOnly = false) {
 		const panel = app.querySelector('#avpvh-at-publish-panel');
-		if (!panel.hidden) {
+		if (!shortcodeOnly && !panel.hidden) {
 			panel.hidden = true;
 			return;
 		}
-		panel.hidden = false;
+		revealPanel(panel);
 		panel.innerHTML = '<p class="avpvh-at-loading">Publicatieopties laden<span></span></p>';
 		try {
 			const options = await api(`publishing-options?job_id=${current.id}`);
 			const existing = options.existing_page;
+			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
+			const menus = [...(options.menus || []), ...(options.block_menus || [])];
 			panel.innerHTML = `<h3>${existing ? 'Transcriptiepagina bijwerken' : 'Transcriptiepagina maken'}</h3>
 				<p>De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.</p>
+				<label>Benodigde shortcode <input id="avpvh-at-shortcode" type="text" readonly value="${escapeHtml(shortcode)}"></label>
+				<p class="description">Plak deze shortcode in een shortcodeblok op een bestaande pagina. “Pagina maken” doet dit automatisch.</p>
 				<label>Paginatitel <input id="avpvh-at-page-title" type="text" value="${escapeHtml(existing?.title || current.title)}"></label>
 				<label>Status <select id="avpvh-at-page-status"><option value="draft" ${'publish' !== existing?.status ? 'selected' : ''}>Concept</option><option value="publish" ${'publish' === existing?.status ? 'selected' : ''}>Gepubliceerd</option></select></label>
-				<label>WordPress-menu <select id="avpvh-at-page-menu"><option value="0">Niet toevoegen / huidige menuplaats behouden</option>${options.menus.map((menu) => `<option value="${menu.id}" ${menu.id === existing?.menu_id ? 'selected' : ''}>${escapeHtml(menu.name)}</option>`).join('')}</select></label>
+				<label>WordPress-menu <select id="avpvh-at-page-menu"><option value="0">Niet toevoegen / huidige menuplaats behouden</option>${menus.map((menu) => `<option value="${escapeHtml(menu.value)}" ${menu.value === existing?.menu_ref ? 'selected' : ''}>${escapeHtml(menu.name)}</option>`).join('')}</select></label>
 				<label>Onder bestaand menu-item <select id="avpvh-at-page-parent"><option value="0">Op hoofdniveau</option></select></label>
 				<p class="description">Kies Gepubliceerd om de pagina voor bezoekers bereikbaar te maken. Menuplaatsing vereist het WordPress-recht om menu’s te wijzigen.</p>
 				<button id="avpvh-at-page-create" type="button" class="button button-primary">${existing ? 'Pagina bijwerken' : 'Pagina maken'}</button>
@@ -559,8 +592,8 @@
 			const parent = panel.querySelector('#avpvh-at-page-parent');
 			const status = panel.querySelector('#avpvh-at-page-status');
 			const updateParents = () => {
-				const selected = options.menus.find((item) => item.id === Number(menu.value));
-				parent.innerHTML = '<option value="0">Op hoofdniveau</option>' + (selected?.items || []).filter((item) => item.id !== existing?.menu_item).map((item) => `<option value="${item.id}" ${item.id === existing?.parent_item ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
+				const selected = menus.find((item) => item.value === menu.value);
+				parent.innerHTML = '<option value="0">Op hoofdniveau</option>' + (selected?.items || []).filter((item) => item.value !== existing?.menu_item_ref).map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === existing?.parent_ref ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
 				const menuAllowed = 'publish' === status.value && options.can_manage_menus;
 				menu.disabled = !menuAllowed;
 				parent.disabled = !menuAllowed || '0' === menu.value;
@@ -580,8 +613,8 @@
 						body: JSON.stringify({
 							title: panel.querySelector('#avpvh-at-page-title').value,
 							status: status.value,
-							menu_id: 'publish' === status.value ? Number(menu.value) : 0,
-							parent_item_id: 'publish' === status.value ? Number(parent.value) : 0
+							menu_ref: 'publish' === status.value ? menu.value : '',
+							parent_ref: 'publish' === status.value ? parent.value : ''
 						})
 					});
 					resultText.innerHTML = ` Opgeslagen. <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">Bekijk pagina</a> · <a href="${escapeHtml(result.edit_url)}">Bewerk in WordPress</a>`;
@@ -590,6 +623,9 @@
 					button.disabled = false;
 				}
 			});
+			if (shortcodeOnly) {
+				panel.querySelector('#avpvh-at-shortcode').select();
+			}
 		} catch (error) {
 			panel.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
 		}
@@ -675,7 +711,7 @@
 			panel.hidden = true;
 			return;
 		}
-		panel.hidden = false;
+		revealPanel(panel);
 		panel.innerHTML = '<p>Geschiedenis laden…</p>';
 		try {
 			const revisions = await api(`jobs/${current.id}/history`);
@@ -699,12 +735,15 @@
 			panel.hidden = true;
 			return;
 		}
-		panel.hidden = false;
+		revealPanel(panel);
 		panel.innerHTML = `<h3>Samenvatting maken</h3>
+			${config.summaryConfigured ? '' : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Vul onder Instellingen de LLM API-URL, API-key en het model in.</p>'}
 			<label>Instructie <textarea id="avpvh-at-summary-instruction" rows="8">${escapeHtml(defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.')}</textarea></label>
-			<button id="avpvh-at-run-summary" type="button" class="button button-primary">Samenvatting maken</button>
+			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>Samenvatting maken</button>
+			${!config.summaryConfigured && config.canManage ? '<button id="avpvh-at-summary-settings" type="button" class="button">Open instellingen</button>' : ''}
 			<span id="avpvh-at-summary-result" aria-live="polite"></span>`;
 		panel.querySelector('#avpvh-at-run-summary').addEventListener('click', createSummary);
+		panel.querySelector('#avpvh-at-summary-settings')?.addEventListener('click', () => app.querySelector('[data-tab="settings"]').click());
 	}
 
 	async function createSummary() {
@@ -781,6 +820,7 @@
 						})
 					});
 					Object.assign(defaults, updated);
+					config.summaryConfigured = Boolean(updated.summary_api_url && updated.summary_model && updated.summary_registered);
 					if (updated.service_url && updated.license_registered) {
 						const result = await api('license/validate', { method: 'POST', body: '{}' });
 						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Instellingen opgeslagen; transcriptiesleutel geldig ✓' : ' Instellingen opgeslagen; transcriptiesleutel ongeldig';

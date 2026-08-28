@@ -288,19 +288,21 @@ final class AVPVH_AT_Plugin {
 			return;
 		}
 
+		$settings = self::settings();
 		wp_enqueue_style( 'avpvh-at-admin', AVPVH_AT_URL . 'assets/admin.css', array(), AVPVH_AT_VERSION );
 		wp_enqueue_script( 'avpvh-at-admin', AVPVH_AT_URL . 'assets/admin.js', array(), AVPVH_AT_VERSION, true );
 		wp_localize_script(
 			'avpvh-at-admin',
 			'avpvhAudioTranscriptie',
 			array(
-				'root'       => esc_url_raw( rest_url( self::REST_NAMESPACE . '/' ) ),
-				'nonce'      => wp_create_nonce( 'wp_rest' ),
-				'canManage'  => current_user_can( 'manage_options' ),
-				'canEdit'    => current_user_can( 'upload_files' ),
-				'canPublish' => current_user_can( 'publish_pages' ),
-				'defaults'   => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
-				'i18n'       => array(
+				'root'              => esc_url_raw( rest_url( self::REST_NAMESPACE . '/' ) ),
+				'nonce'             => wp_create_nonce( 'wp_rest' ),
+				'canManage'         => current_user_can( 'manage_options' ),
+				'canEdit'           => current_user_can( 'upload_files' ),
+				'canPublish'        => current_user_can( 'publish_pages' ),
+				'summaryConfigured' => '' !== $settings['summary_api_url'] && '' !== $settings['summary_model'] && '' !== $settings['summary_api_key'],
+				'defaults'          => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
+				'i18n'              => array(
 					'requestFailed' => esc_html__( 'De aanvraag is mislukt.', 'avpvh-audio-transcriptie' ),
 				),
 			)
@@ -781,11 +783,14 @@ final class AVPVH_AT_Plugin {
 	 * @return array
 	 */
 	public static function publishing_options( WP_REST_Request $request ): array {
-		$job_id             = absint( $request->get_param( 'job_id' ) );
-		$page_id            = self::published_page_id( $job_id );
-		$menus              = array();
-		$existing_menu_item = $page_id ? absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) ) : 0;
-		$existing_menu_ids  = $existing_menu_item ? wp_get_object_terms( $existing_menu_item, 'nav_menu', array( 'fields' => 'ids' ) ) : array();
+		$job_id                     = absint( $request->get_param( 'job_id' ) );
+		$page_id                    = self::published_page_id( $job_id );
+		$menus                      = array();
+		$existing_menu_item         = $page_id ? absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) ) : 0;
+		$existing_navigation_id     = $page_id ? absint( get_post_meta( $page_id, '_avpvh_at_navigation_id', true ) ) : 0;
+		$existing_navigation_parent = $page_id ? sanitize_text_field( (string) get_post_meta( $page_id, '_avpvh_at_navigation_parent', true ) ) : '';
+		$existing_menu_ids          = $existing_menu_item ? wp_get_object_terms( $existing_menu_item, 'nav_menu', array( 'fields' => 'ids' ) ) : array();
+		$block_menus                = array();
 
 		if ( current_user_can( 'edit_theme_options' ) ) {
 			foreach ( wp_get_nav_menus() as $menu ) {
@@ -800,24 +805,53 @@ final class AVPVH_AT_Plugin {
 				}
 				$menus[] = array(
 					'id'    => (int) $menu->term_id,
+					'value' => 'classic:' . (int) $menu->term_id,
 					'name'  => sanitize_text_field( (string) $menu->name ),
-					'items' => $items,
+					'items' => array_map(
+						static function ( array $item ): array {
+							$item['value'] = 'classic:' . $item['id'];
+							return $item;
+						},
+						$items
+					),
+				);
+			}
+
+			$navigation_posts = get_posts(
+				array(
+					'post_type'      => 'wp_navigation',
+					'post_status'    => array( 'draft', 'publish' ),
+					'posts_per_page' => 100,
+					'orderby'        => 'title',
+					'order'          => 'ASC',
+				)
+			);
+			foreach ( $navigation_posts as $navigation ) {
+				$block_menus[] = array(
+					'id'    => (int) $navigation->ID,
+					'value' => 'block:' . (int) $navigation->ID,
+					'name'  => sanitize_text_field( (string) $navigation->post_title ),
+					'items' => self::navigation_submenu_options( parse_blocks( $navigation->post_content ) ),
 				);
 			}
 		}
 
 		return array(
 			'menus'            => $menus,
+			'block_menus'      => $block_menus,
 			'can_manage_menus' => current_user_can( 'edit_theme_options' ),
 			'existing_page'    => $page_id ? array(
-				'id'          => $page_id,
-				'title'       => get_the_title( $page_id ),
-				'status'      => get_post_status( $page_id ),
-				'url'         => get_permalink( $page_id ),
-				'edit_url'    => get_edit_post_link( $page_id, 'raw' ),
-				'menu_item'   => $existing_menu_item,
-				'menu_id'     => ! is_wp_error( $existing_menu_ids ) && $existing_menu_ids ? (int) $existing_menu_ids[0] : 0,
-				'parent_item' => $existing_menu_item ? absint( get_post_meta( $existing_menu_item, '_menu_item_menu_item_parent', true ) ) : 0,
+				'id'            => $page_id,
+				'title'         => get_the_title( $page_id ),
+				'status'        => get_post_status( $page_id ),
+				'url'           => get_permalink( $page_id ),
+				'edit_url'      => get_edit_post_link( $page_id, 'raw' ),
+				'menu_item'     => $existing_menu_item,
+				'menu_id'       => ! is_wp_error( $existing_menu_ids ) && $existing_menu_ids ? (int) $existing_menu_ids[0] : 0,
+				'parent_item'   => $existing_menu_item ? absint( get_post_meta( $existing_menu_item, '_menu_item_menu_item_parent', true ) ) : 0,
+				'menu_ref'      => $existing_navigation_id ? 'block:' . $existing_navigation_id : ( ! is_wp_error( $existing_menu_ids ) && $existing_menu_ids ? 'classic:' . (int) $existing_menu_ids[0] : '0' ),
+				'parent_ref'    => $existing_navigation_id ? $existing_navigation_parent : ( $existing_menu_item ? 'classic:' . absint( get_post_meta( $existing_menu_item, '_menu_item_menu_item_parent', true ) ) : '0' ),
+				'menu_item_ref' => $existing_menu_item ? 'classic:' . $existing_menu_item : '',
 			) : null,
 		);
 	}
@@ -829,14 +863,17 @@ final class AVPVH_AT_Plugin {
 	 * @return array|WP_Error
 	 */
 	public static function publish_page( WP_REST_Request $request ): array|WP_Error {
-		$job_id   = absint( $request['id'] );
-		$job      = self::get_row( $job_id );
-		$page_id  = self::published_page_id( $job_id );
-		$title    = sanitize_text_field( (string) $request->get_param( 'title' ) );
-		$status   = 'publish' === $request->get_param( 'status' ) ? 'publish' : 'draft';
-		$menu_id  = absint( $request->get_param( 'menu_id' ) );
-		$parent   = absint( $request->get_param( 'parent_item_id' ) );
-		$postdata = array(
+		$job_id        = absint( $request['id'] );
+		$job           = self::get_row( $job_id );
+		$page_id       = self::published_page_id( $job_id );
+		$title         = sanitize_text_field( (string) $request->get_param( 'title' ) );
+		$status        = 'publish' === $request->get_param( 'status' ) ? 'publish' : 'draft';
+		$menu_ref      = sanitize_text_field( (string) $request->get_param( 'menu_ref' ) );
+		$parent_ref    = sanitize_text_field( (string) $request->get_param( 'parent_ref' ) );
+		$menu_id       = str_starts_with( $menu_ref, 'classic:' ) ? absint( substr( $menu_ref, 8 ) ) : absint( $request->get_param( 'menu_id' ) );
+		$parent        = str_starts_with( $parent_ref, 'classic:' ) ? absint( substr( $parent_ref, 8 ) ) : absint( $request->get_param( 'parent_item_id' ) );
+		$navigation_id = str_starts_with( $menu_ref, 'block:' ) ? absint( substr( $menu_ref, 6 ) ) : 0;
+		$postdata      = array(
 			'post_title'   => '' !== $title ? $title : $job->title,
 			'post_content' => sprintf( '[avpvh_audio_transcriptie id="%d"]', $job_id ),
 			'post_status'  => $status,
@@ -896,12 +933,59 @@ final class AVPVH_AT_Plugin {
 			update_post_meta( $page_id, '_avpvh_at_menu_item_id', $menu_item_id );
 		}
 
+		if ( $navigation_id ) {
+			if ( ! current_user_can( 'edit_theme_options' ) ) {
+				return new WP_Error( 'avpvh_at_navigation_forbidden', __( 'Je mag de WordPress-navigatie niet wijzigen.', 'avpvh-audio-transcriptie' ), array( 'status' => 403 ) );
+			}
+			if ( 'publish' !== $status ) {
+				return new WP_Error( 'avpvh_at_navigation_requires_publish', __( 'Publiceer de pagina voordat je deze aan de navigatie toevoegt.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+			}
+			$navigation = get_post( $navigation_id );
+			if ( ! $navigation || 'wp_navigation' !== $navigation->post_type ) {
+				return new WP_Error( 'avpvh_at_navigation_missing', __( 'De gekozen bloknavigatie bestaat niet meer.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
+			}
+			$blocks = parse_blocks( $navigation->post_content );
+			if ( ! self::navigation_contains_page( $blocks, (int) $page_id ) ) {
+				$link_markup = get_comment_delimited_block_content(
+					'core/navigation-link',
+					array(
+						'label' => get_the_title( $page_id ),
+						'kind'  => 'post-type',
+						'type'  => 'page',
+						'id'    => (int) $page_id,
+						'url'   => get_permalink( $page_id ),
+					),
+					''
+				);
+				$link_blocks = parse_blocks( $link_markup );
+				$path        = str_starts_with( $parent_ref, 'block:' ) ? substr( $parent_ref, 6 ) : '';
+				if ( ! self::append_navigation_block( $blocks, $path, $link_blocks[0] ) ) {
+					return new WP_Error( 'avpvh_at_navigation_parent_missing', __( 'Het gekozen onderdeel bestaat niet meer in de bloknavigatie.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+				}
+				$updated = wp_update_post(
+					wp_slash(
+						array(
+							'ID'           => $navigation_id,
+							'post_content' => serialize_blocks( $blocks ),
+						)
+					),
+					true
+				);
+				if ( is_wp_error( $updated ) ) {
+					return $updated;
+				}
+			}
+			update_post_meta( $page_id, '_avpvh_at_navigation_id', $navigation_id );
+			update_post_meta( $page_id, '_avpvh_at_navigation_parent', $parent_ref );
+		}
+
 		return array(
-			'page_id'      => (int) $page_id,
-			'status'       => get_post_status( $page_id ),
-			'url'          => get_permalink( $page_id ),
-			'edit_url'     => get_edit_post_link( $page_id, 'raw' ),
-			'menu_item_id' => (int) $menu_item_id,
+			'page_id'       => (int) $page_id,
+			'status'        => get_post_status( $page_id ),
+			'url'           => get_permalink( $page_id ),
+			'edit_url'      => get_edit_post_link( $page_id, 'raw' ),
+			'menu_item_id'  => (int) $menu_item_id,
+			'navigation_id' => (int) $navigation_id,
 		);
 	}
 
@@ -1242,6 +1326,92 @@ final class AVPVH_AT_Plugin {
 			)
 		);
 		return $pages ? (int) $pages[0] : 0;
+	}
+
+	/**
+	 * Lists navigation submenus that can receive the transcript page.
+	 *
+	 * @param array  $blocks Parsed navigation blocks.
+	 * @param string $prefix Parent index path.
+	 * @param int    $depth  Navigation depth.
+	 * @return array
+	 */
+	private static function navigation_submenu_options( array $blocks, string $prefix = '', int $depth = 0 ): array {
+		$options = array();
+		foreach ( $blocks as $index => $block ) {
+			$path = '' === $prefix ? (string) $index : $prefix . '.' . $index;
+			if ( 'core/navigation-submenu' === ( $block['blockName'] ?? '' ) ) {
+				$label     = wp_strip_all_tags( (string) ( $block['attrs']['label'] ?? __( 'Naamloos submenu', 'avpvh-audio-transcriptie' ) ) );
+				$options[] = array(
+					'id'     => $path,
+					'value'  => 'block:' . $path,
+					'title'  => str_repeat( '— ', $depth ) . $label,
+					'parent' => 0,
+				);
+			}
+			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$options = array_merge( $options, self::navigation_submenu_options( $block['innerBlocks'], $path, $depth + 1 ) );
+			}
+		}
+		return $options;
+	}
+
+	/**
+	 * Checks whether a navigation already links to a page.
+	 *
+	 * @param array $blocks  Parsed navigation blocks.
+	 * @param int   $page_id Page ID.
+	 * @return bool
+	 */
+	private static function navigation_contains_page( array $blocks, int $page_id ): bool {
+		foreach ( $blocks as $block ) {
+			if ( 'core/navigation-link' === ( $block['blockName'] ?? '' ) && absint( $block['attrs']['id'] ?? 0 ) === $page_id ) {
+				return true;
+			}
+			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) && self::navigation_contains_page( $block['innerBlocks'], $page_id ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Appends a link at the root or inside a selected navigation submenu.
+	 *
+	 * @param array  $blocks Parsed navigation blocks, updated in place.
+	 * @param string $path   Dot-separated block index path, or empty for root.
+	 * @param array  $link   Parsed navigation-link block.
+	 * @return bool
+	 */
+	private static function append_navigation_block( array &$blocks, string $path, array $link ): bool {
+		if ( '' === $path ) {
+			$blocks[] = $link;
+			return true;
+		}
+		if ( ! preg_match( '/^\d+(?:\.\d+)*$/', $path ) ) {
+			return false;
+		}
+
+		$indexes = array_map( 'absint', explode( '.', $path ) );
+		$level   = &$blocks;
+		foreach ( $indexes as $position => $index ) {
+			if ( ! isset( $level[ $index ] ) || ! is_array( $level[ $index ] ) ) {
+				return false;
+			}
+			if ( count( $indexes ) - 1 === $position ) {
+				if ( 'core/navigation-submenu' !== ( $level[ $index ]['blockName'] ?? '' ) ) {
+					return false;
+				}
+				$level[ $index ]['innerBlocks'][]  = $link;
+				$level[ $index ]['innerContent'][] = null;
+				return true;
+			}
+			if ( ! isset( $level[ $index ]['innerBlocks'] ) || ! is_array( $level[ $index ]['innerBlocks'] ) ) {
+				return false;
+			}
+			$level = &$level[ $index ]['innerBlocks'];
+		}
+		return false;
 	}
 
 	/**

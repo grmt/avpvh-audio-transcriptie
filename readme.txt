@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.7.0
+Stable tag: 0.8.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,14 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.8.0 =
+
+* Group transcript, export, and publication actions into compact menus.
+* Add and remove sentences directly beside each transcript row.
+* Make the transcript title directly editable and explain which stored files retain their original names.
+* Show and copy the page shortcode from the publication panel.
+* Surface missing summary configuration and support block-theme navigation menus.
+
 = 0.7.0 =
 
 * Rename transcripts from a non-blocking editor panel.
@@ -119,6 +127,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.8.0 =
+
+Adds a compact contextual editor, visible shortcode guidance, clearer summary configuration, and block-navigation publishing.
 
 = 0.7.0 =
 
