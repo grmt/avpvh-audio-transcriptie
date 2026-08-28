@@ -762,8 +762,11 @@
 		revealPanel(panel);
 		body.dataset.loaded = 'yes';
 		body.innerHTML = `${current.summary ? `<div class="avpvh-at-summary-result"><h3>Bestaande samenvatting</h3>${current.summary}</div>` : ''}
-			${config.summaryConfigured ? '' : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Vul onder Instellingen de LLM API-URL, API-key en het model in.</p>'}
-			<label>Instructie <textarea id="avpvh-at-summary-instruction" rows="8">${escapeHtml(defaults.summary_prompt || 'Maak een beknopt verslag met kernpunten, besluiten, acties en openstaande punten.')}</textarea></label>
+			${config.summaryConfigured ? `<p class="description">Route: ${config.aiClientAvailable ? 'centrale WordPress AI Client' : 'direct ingestelde LLM-API'}.</p>` : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Configureer een WordPress AI-connector of vul onder Instellingen de directe LLM API-URL, API-key en het model in.</p>'}
+			<label>Procedurele toelichting <textarea id="avpvh-at-summary-procedure" rows="7">${escapeHtml(defaults.summary_procedure_prompt || defaults.summary_prompt || 'Werk uitsluitend op basis van de transcriptie. Maak duidelijk onderscheid tussen wat letterlijk is besproken en eventuele gevolgtrekkingen. Verzin geen feiten.')}</textarea></label>
+			<p class="description">Beschrijf hier de werkwijze, structuur, zorgvuldigheid en gewenste vorm van het resultaat.</p>
+			<label>Inhoudelijke toelichting <textarea id="avpvh-at-summary-content" rows="7">${escapeHtml(defaults.summary_content_prompt || 'Behandel de deelnemers en rollen, kernpunten per onderwerp, standpunten per partij, besluiten, actiepunten, openstaande vragen en relevante tijdstippen.')}</textarea></label>
+			<p class="description">Beschrijf hier welke onderwerpen, vragen, partijen of accenten inhoudelijk extra aandacht moeten krijgen.</p>
 			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>Samenvatting maken</button>
 			${!config.summaryConfigured && config.canManage ? '<button id="avpvh-at-summary-settings" type="button" class="button">Open instellingen</button>' : ''}
 			<span id="avpvh-at-summary-result" aria-live="polite"></span>`;
@@ -775,14 +778,15 @@
 		const panel = app.querySelector('#avpvh-at-summary-panel');
 		const button = panel.querySelector('#avpvh-at-run-summary');
 		const resultText = panel.querySelector('#avpvh-at-summary-result');
-		const prompt = panel.querySelector('#avpvh-at-summary-instruction').value;
+		const procedurePrompt = panel.querySelector('#avpvh-at-summary-procedure').value;
+		const contentPrompt = panel.querySelector('#avpvh-at-summary-content').value;
 		button.disabled = true;
 		resultText.textContent = ' Correcties opslaan en samenvatting maken…';
 		await flushSave();
 		try {
 			const result = await api(`jobs/${current.id}/summary`, {
 				method: 'POST',
-				body: JSON.stringify({ prompt })
+				body: JSON.stringify({ procedure_prompt: procedurePrompt, content_prompt: contentPrompt })
 			});
 			if (result.summary) {
 				current.summary = result.summary;
@@ -815,12 +819,16 @@
 				<label>Standaardprompt <textarea id="avpvh-at-prompt-setting" rows="7">${escapeHtml(settings.default_prompt)}</textarea></label>
 				<label>Standaardglossary <textarea id="avpvh-at-glossary-setting" rows="7" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(settings.default_glossary)}</textarea></label>
 				<p>Status: <strong>${settings.license_registered ? 'sleutel geregistreerd' : 'niet ingesteld'}</strong></p>
-				<h3>Samenvatting (OpenAI-compatibele LLM-API)</h3>
-				<p>Gebruik hier de volledige chat-completions-URL en de API-key van de gekozen LLM-provider. Deze sleutel staat los van de transcriptieservicesleutel.</p>
+				<h3>Samenvatting en AI-provider</h3>
+				<p>WordPress AI Client: <strong>${settings.ai_client_available ? 'provider beschikbaar; deze route krijgt voorrang' : 'nog geen geschikte connector geconfigureerd'}</strong>.</p>
+				<p>De onderstaande directe chat-completions-instellingen blijven beschikbaar als terugval wanneer WordPress geen AI-provider heeft.</p>
 				<label>LLM API-URL <input id="avpvh-at-summary-url" type="url" value="${escapeHtml(settings.summary_api_url)}" placeholder="https://provider.example/v1/chat/completions"></label>
 				<label>LLM API-key <input id="avpvh-at-summary-key" type="password" placeholder="${escapeHtml(settings.summary_key_hint || 'API-key; leeg laten om de bestaande te behouden')}"></label>
 				<label>LLM-model <input id="avpvh-at-summary-model" type="text" value="${escapeHtml(settings.summary_model)}" placeholder="Modelnaam van de provider"></label>
-				<label>Standaardinstructie <textarea id="avpvh-at-summary-prompt" rows="5">${escapeHtml(settings.summary_prompt)}</textarea></label>
+				<label>Standaard procedurele toelichting <textarea id="avpvh-at-summary-procedure-setting" rows="6">${escapeHtml(settings.summary_procedure_prompt)}</textarea></label>
+				<p class="description">Werkwijze, opbouw, voorzichtigheid en gewenste uitvoervorm.</p>
+				<label>Standaard inhoudelijke toelichting <textarea id="avpvh-at-summary-content-setting" rows="6">${escapeHtml(settings.summary_content_prompt)}</textarea></label>
+				<p class="description">Onderwerpen, vragen en accenten die inhoudelijk moeten worden behandeld.</p>
 				<p>Status LLM-key: <strong>${settings.summary_registered ? 'sleutel geregistreerd' : 'niet ingesteld of niet vereist'}</strong></p>
 				<button id="avpvh-at-save-settings" type="button" class="button button-primary">Instellingen opslaan</button>
 				<span id="avpvh-at-license-result" aria-live="polite"></span>
@@ -841,11 +849,13 @@
 							summary_api_url: view.querySelector('#avpvh-at-summary-url').value,
 							summary_api_key: view.querySelector('#avpvh-at-summary-key').value,
 							summary_model: view.querySelector('#avpvh-at-summary-model').value,
-							summary_prompt: view.querySelector('#avpvh-at-summary-prompt').value
+							summary_procedure_prompt: view.querySelector('#avpvh-at-summary-procedure-setting').value,
+							summary_content_prompt: view.querySelector('#avpvh-at-summary-content-setting').value
 						})
 					});
 					Object.assign(defaults, updated);
-					config.summaryConfigured = Boolean(updated.summary_api_url && updated.summary_model && updated.summary_registered);
+					config.aiClientAvailable = Boolean(updated.ai_client_available);
+					config.summaryConfigured = config.aiClientAvailable || Boolean(updated.summary_api_url && updated.summary_model && updated.summary_registered);
 					if (updated.service_url && updated.license_registered) {
 						const result = await api('license/validate', { method: 'POST', body: '{}' });
 						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Instellingen opgeslagen; transcriptiesleutel geldig ✓' : ' Instellingen opgeslagen; transcriptiesleutel ongeldig';

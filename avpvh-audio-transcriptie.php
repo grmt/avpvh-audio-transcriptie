@@ -3,7 +3,7 @@
  * Plugin Name:       AVPVH Audio Transcriptie
  * Plugin URI:        https://github.com/grmt/avpvh-audio-transcriptie
  * Description:       Progressieve audiotranscriptie met een editor, revisiehistorie en optionele samenvattingen.
- * Version:           0.8.1
+ * Version:           0.8.2
  * Requires at least: 6.6
  * Requires PHP:      8.1
  * Author:            AVPVH
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'AVPVH_AT_VERSION', '0.8.1' );
+define( 'AVPVH_AT_VERSION', '0.8.2' );
 define( 'AVPVH_AT_FILE', __FILE__ );
 define( 'AVPVH_AT_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AVPVH_AT_URL', plugin_dir_url( __FILE__ ) );

@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.8.1
+Stable tag: 0.8.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,12 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.8.2 =
+
+* Split summary guidance into separate procedural and content-specific prompts.
+* Allow both prompts to be configured globally and adjusted before each summary request.
+* Prefer WordPress AI Client with a configured provider and retain the direct LLM endpoint as fallback.
+
 = 0.8.1 =
 
 * Present publishing, summary, and transcript content as three ordered editor sections.
@@ -133,6 +139,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.8.2 =
+
+Adds separate procedural and content-specific guidance for summaries.
 
 = 0.8.1 =
 
