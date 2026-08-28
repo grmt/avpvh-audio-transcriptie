@@ -72,8 +72,14 @@
 		try {
 			const jobs = await api('jobs');
 			view.innerHTML = `
-				${config.canEdit ? `<section class="avpvh-at-card">
-					<h2>Nieuwe transcriptie</h2>
+				<section class="avpvh-at-card">
+					<h2>Transcripties</h2>
+					<div class="avpvh-at-jobs">
+						${jobs.map(jobRow).join('') || '<p>Nog geen transcripties.</p>'}
+					</div>
+				</section>
+				${config.canEdit ? `<details class="avpvh-at-card avpvh-at-new-panel">
+					<summary><strong>Nieuwe transcriptie</strong></summary>
 					<div class="avpvh-at-new">
 						<label>Titel <input id="avpvh-at-title" type="text"></label>
 						<label>Transcriptie-engine <input id="avpvh-at-provider" type="text" value="${escapeHtml(defaults.provider || 'faster-whisper')}" list="avpvh-at-providers"><datalist id="avpvh-at-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
@@ -89,13 +95,7 @@
 						<label>Glossary <textarea id="avpvh-at-glossary" rows="5" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(defaults.default_glossary || '')}</textarea></label>
 					</details>
 					<progress id="avpvh-at-upload" max="100" value="0" hidden></progress>
-				</section>` : ''}
-				<section class="avpvh-at-card">
-					<h2>Transcripties</h2>
-					<div class="avpvh-at-jobs">
-						${jobs.map(jobRow).join('') || '<p>Nog geen transcripties.</p>'}
-					</div>
-				</section>`;
+				</details>` : ''}`;
 			view.querySelector('#avpvh-at-start')?.addEventListener('click', startJob);
 			view.querySelectorAll('.avpvh-at-job').forEach((button) => button.addEventListener('click', () => openJob(Number(button.dataset.id))));
 		} catch (error) {
@@ -106,7 +106,7 @@
 	function jobRow(job) {
 		return `<button type="button" class="avpvh-at-job" data-id="${job.id}">
 			<strong>${escapeHtml(job.title)}</strong>
-			<span>${escapeHtml(job.status)} · ${Math.round(job.progress)}%</span>
+			<span>Open transcriptie · ${escapeHtml(job.status)} · ${Math.round(job.progress)}%</span>
 			<progress max="100" value="${job.progress}"></progress>
 		</button>`;
 	}

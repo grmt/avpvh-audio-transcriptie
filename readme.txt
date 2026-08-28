@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.4.0
+Stable tag: 0.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -74,6 +74,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.4.1 =
+
+* Show existing transcripts before the collapsed new-transcription form.
+
 = 0.4.0 =
 
 * Added global and per-job selection of provider, model, language, prompt, glossary, and chunk duration.
@@ -93,6 +97,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.4.1 =
+
+Existing transcripts are immediately visible at the top of the editor page.
 
 = 0.4.0 =
 
