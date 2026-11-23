@@ -1,10 +1,43 @@
+# Minor and patch updates come as one PR per ecosystem a week; majors stay
+# separate PRs. Security updates also come as one PR per ecosystem.
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: "/"
-    schedule:
-      interval: weekly
-  - package-ecosystem: composer
-    directory: "/"
-    schedule:
-      interval: weekly
+- package-ecosystem: github-actions
+  directory: "/"
+  groups:
+    actions:
+      update-types: [minor, patch]
+    # Security updates bundled into one PR, majors included.
+    actions-security:
+      applies-to: security-updates
+      patterns: ["*"]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt
+- package-ecosystem: npm
+  directory: "/"
+  groups:
+    npm:
+      update-types: [minor, patch]
+    # Security updates bundled into one PR, majors included.
+    npm-security:
+      applies-to: security-updates
+      patterns: ["*"]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt
+- package-ecosystem: composer
+  directory: "/"
+  groups:
+    composer:
+      update-types: [minor, patch]
+    # Security updates bundled into one PR, majors included.
+    composer-security:
+      applies-to: security-updates
+      patterns: ["*"]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt
