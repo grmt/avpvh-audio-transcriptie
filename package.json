@@ -1,10 +1,10 @@
 {
   "name": "avpvh-audio-transcriptie",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "license": "GPL-2.0-or-later",
   "scripts": {
-    "check": "node --check assets/admin.js",
+    "check": "node --check assets/admin.js && node --check assets/frontend.js",
     "build:plugin": "bash scripts/build-plugin.sh"
   }
 }

@@ -261,6 +261,10 @@
 	gap: 3px;
 }
 
+.avpvh-at-segment[hidden] {
+	display: none;
+}
+
 .avpvh-at-segment {
 	display: grid;
 	grid-template-columns: 80px 150px 190px minmax(260px, 1fr) auto;

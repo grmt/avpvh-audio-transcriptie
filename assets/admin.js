@@ -6,11 +6,22 @@
 	const defaults = config.defaults || {};
 	const app = document.querySelector('#avpvh-at-app');
 	let current = null;
-	let dirty = new Set();
+	// Segment id -> edit counter value of its latest unsaved change.
+	let dirty = new Map();
+	// Segment ids removed locally and not yet saved.
+	let deleted = new Set();
+	let editCounter = 0;
 	let focusedId = null;
 	let saveTimer = null;
 	let pollTimer = null;
 	let saving = false;
+	let savePromise = null;
+	let conflicted = false;
+	let conflictRetries = 0;
+	// Bumped whenever a save or restore starts/ends; lets poll() detect stale reads.
+	let saveSeq = 0;
+	// Bumped on every navigation; async work for an older view is discarded.
+	let viewGeneration = 0;
 
 	const escapeHtml = (value) => String(value ?? '').replace(
 		/[&<>"']/g,
@@ -26,10 +37,17 @@
 				...(options.headers || {})
 			}
 		});
-		const data = await response.json();
-		if (!response.ok) {
-			const error = new Error(data.message || config.i18n.requestFailed);
-			error.status = response.status;
+		const text = await response.text();
+		let data = null;
+		let parsed = true;
+		try {
+			data = text ? JSON.parse(text) : null;
+		} catch (parseError) {
+			parsed = false;
+		}
+		if (!response.ok || !parsed) {
+			const error = new Error(data?.message || `${config.i18n.requestFailed} (HTTP ${response.status})`);
+			error.status = response.ok ? 0 : response.status;
 			error.data = data;
 			throw error;
 		}
@@ -46,8 +64,10 @@
 			<section id="avpvh-at-view"></section>`;
 
 		app.querySelectorAll('[data-tab]').forEach((button) => {
-			button.addEventListener('click', () => {
-				clearTimeout(pollTimer);
+			button.addEventListener('click', async () => {
+				if (!(await leaveEditor())) {
+					return;
+				}
 				app.querySelectorAll('[data-tab]').forEach((item) => item.classList.toggle('active', item === button));
 				if ('settings' === button.dataset.tab) {
 					renderSettings();
@@ -59,6 +79,48 @@
 		renderJobList();
 	}
 
+	function hasPendingChanges() {
+		return dirty.size > 0 || deleted.size > 0;
+	}
+
+	function markDirty(id) {
+		editCounter += 1;
+		dirty.set(id, editCounter);
+		scheduleSave();
+	}
+
+	function resetEditorState() {
+		clearTimeout(saveTimer);
+		clearTimeout(pollTimer);
+		saveTimer = null;
+		pollTimer = null;
+		current = null;
+		dirty = new Map();
+		deleted = new Set();
+		focusedId = null;
+		conflicted = false;
+	}
+
+	// Saves pending edits and stops editor activity. Resolves false when the
+	// user chooses to stay because edits could not be saved.
+	async function leaveEditor() {
+		if (!current) {
+			viewGeneration += 1;
+			return true;
+		}
+		clearTimeout(pollTimer);
+		await flushSave();
+		if (hasPendingChanges() && !window.confirm('Niet alle wijzigingen zijn opgeslagen. Toch de editor verlaten?')) {
+			if (current && shouldPoll()) {
+				poll();
+			}
+			return false;
+		}
+		viewGeneration += 1;
+		resetEditorState();
+		return true;
+	}
+
 	function notice(message, type = 'info') {
 		const element = app.querySelector('#avpvh-at-notice');
 		element.className = `notice notice-${type} inline`;
@@ -67,10 +129,14 @@
 	}
 
 	async function renderJobList() {
+		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
 		view.innerHTML = '<p class="avpvh-at-loading">Transcripties laden<span></span></p>';
 		try {
 			const jobs = await api('jobs');
+			if (generation !== viewGeneration) {
+				return;
+			}
 			view.innerHTML = `
 				<section class="avpvh-at-card">
 					<h2>Transcripties</h2>
@@ -99,7 +165,9 @@
 			view.querySelector('#avpvh-at-start')?.addEventListener('click', startJob);
 			view.querySelectorAll('.avpvh-at-job').forEach((button) => button.addEventListener('click', () => openJob(Number(button.dataset.id))));
 		} catch (error) {
-			view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			if (generation === viewGeneration) {
+				view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			}
 		}
 	}
 
@@ -172,18 +240,24 @@
 	}
 
 	async function openJob(id) {
-		clearTimeout(pollTimer);
+		resetEditorState();
+		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
 		view.innerHTML = '<p class="avpvh-at-loading">Transcriptie laden<span></span></p>';
-		current = null;
-		dirty = new Set();
-		focusedId = null;
 		try {
-			current = await api(`jobs/${id}`);
+			const job = await api(`jobs/${id}`);
+			if (generation !== viewGeneration) {
+				return;
+			}
+			current = job;
 			renderEditor();
-			poll();
+			if (shouldPoll()) {
+				pollTimer = setTimeout(poll, 3000);
+			}
 		} catch (error) {
-			view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			if (generation === viewGeneration) {
+				view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			}
 		}
 	}
 
@@ -198,7 +272,7 @@
 					<h2>${config.canEdit ? `<button id="avpvh-at-rename" type="button" class="avpvh-at-title-button" title="Naam wijzigen">${escapeHtml(current.title)}</button>` : escapeHtml(current.title)}</h2>
 					<div><span id="avpvh-at-status">${escapeHtml(current.status)}</span> · <span id="avpvh-at-percent">${Math.round(current.progress)}%</span> <span id="avpvh-at-save-state" aria-live="polite"></span></div>
 					<progress id="avpvh-at-progress" max="100" value="${current.progress}"></progress>
-					${current.audio_url ? `<audio id="avpvh-at-player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : ''}
+					${playerHtml()}
 				</div>
 				<div class="avpvh-at-actions">
 					<details class="avpvh-at-action-menu"><summary class="button">Transcriptie</summary><div>
@@ -216,31 +290,31 @@
 			<div id="avpvh-at-rename-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-storage-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-history-panel" class="avpvh-at-card" hidden></div>
-			<details id="avpvh-at-publish-panel" class="avpvh-at-card avpvh-at-section">
+			${config.canPublish ? `<details id="avpvh-at-publish-panel" class="avpvh-at-card avpvh-at-section">
 				<summary><strong>Transcriptiepagina maken</strong></summary>
 				<div class="avpvh-at-panel-body"><p>Open deze sectie om de shortcode te bekijken of een WordPress-pagina te maken.</p></div>
-			</details>
-			<details id="avpvh-at-summary-panel" class="avpvh-at-card avpvh-at-section">
-				<summary><strong>Samenvatting maken</strong></summary>
-				<div class="avpvh-at-panel-body">${current.summary ? `<div class="avpvh-at-summary-result">${current.summary}</div>` : '<p>Open deze sectie om een samenvatting te laten maken.</p>'}</div>
+			</details>` : ''}
+			<details id="avpvh-at-summary-panel" class="avpvh-at-card avpvh-at-section" ${config.canEdit || current.summary ? '' : 'hidden'}>
+				<summary><strong>${config.canEdit ? 'Samenvatting maken' : 'Samenvatting'}</strong></summary>
+				<div class="avpvh-at-panel-body">${current.summary ? `<div class="avpvh-at-summary-result">${current.summary}</div>` : '<p class="avpvh-at-summary-placeholder">Open deze sectie om een samenvatting te laten maken.</p>'}</div>
 			</details>
 			<details class="avpvh-at-card avpvh-at-section avpvh-at-transcript-section" open>
-				<summary><strong>Transcriptie</strong> <span>${current.segments.length} fragmenten</span></summary>
+				<summary><strong>Transcriptie</strong> <span id="avpvh-at-segment-count">${current.segments.length} fragmenten</span></summary>
 				<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
 				<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>
 			</details>`;
 
 		view.querySelector('#avpvh-at-back').addEventListener('click', async () => {
-			await flushSave();
-			clearTimeout(pollTimer);
-			renderJobList();
+			if (await leaveEditor()) {
+				renderJobList();
+			}
 		});
 		view.querySelector('#avpvh-at-rename')?.addEventListener('click', renderRenamePanel);
 		view.querySelector('#avpvh-at-storage').addEventListener('click', renderStoragePanel);
 		view.querySelector('#avpvh-at-export-html').addEventListener('click', exportHtml);
 		view.querySelector('#avpvh-at-export-markdown').addEventListener('click', exportMarkdown);
 		view.querySelector('#avpvh-at-history').addEventListener('click', renderHistory);
-		view.querySelector('#avpvh-at-publish-panel').addEventListener('toggle', (event) => {
+		view.querySelector('#avpvh-at-publish-panel')?.addEventListener('toggle', (event) => {
 			const body = event.currentTarget.querySelector('.avpvh-at-panel-body');
 			if (event.currentTarget.open && 'yes' !== body.dataset.loaded && 'yes' !== body.dataset.loading) {
 				body.dataset.loading = 'yes';
@@ -249,14 +323,72 @@
 		});
 		view.querySelector('#avpvh-at-summary-panel').addEventListener('toggle', (event) => {
 			const body = event.currentTarget.querySelector('.avpvh-at-panel-body');
-			if (event.currentTarget.open && 'yes' !== body.dataset.loaded) {
+			if (config.canEdit && event.currentTarget.open && 'yes' !== body.dataset.loaded) {
 				renderSummaryPanel();
 			}
 		});
 		view.querySelector('#avpvh-at-search').addEventListener('input', filterRows);
-		bindSegmentRows();
+		app.querySelectorAll('.avpvh-at-segment').forEach(bindSegmentRow);
 		bindAudioSync();
 		setFocus(current.segments[0]?.id || null, false);
+	}
+
+	function playerHtml() {
+		return current.audio_url ? `<audio id="avpvh-at-player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : '';
+	}
+
+	function labelOptions(field) {
+		return uniqueValues(current.segments, field).map((value) => `<option value="${escapeHtml(value)}">`).join('');
+	}
+
+	// Rebuilds only the segment rows, keeping the audio player, panels, search
+	// filter and the caret of the field being edited.
+	function renderSegments() {
+		const container = app.querySelector('#avpvh-at-segments');
+		if (!container) {
+			return;
+		}
+		const active = document.activeElement;
+		const activeRow = active && container.contains(active) ? active.closest('.avpvh-at-segment') : null;
+		const activeId = activeRow?.dataset.id;
+		const activeClass = active && activeRow ? ['textarea', '.avpvh-at-party', '.avpvh-at-speaker'].find((selector) => active.matches(selector)) : null;
+		const selection = activeClass && 'selectionStart' in active ? [active.selectionStart, active.selectionEnd] : null;
+
+		container.innerHTML = current.segments.map(segmentRow).join('');
+		container.querySelectorAll('.avpvh-at-segment').forEach(bindSegmentRow);
+		app.querySelector('#avpvh-at-speakers').innerHTML = labelOptions('speaker');
+		app.querySelector('#avpvh-at-parties').innerHTML = labelOptions('party');
+		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
+		applyFilter(false);
+		const keepFocus = current.segments.some((segment) => segment.id === focusedId) ? focusedId : current.segments[0]?.id || null;
+		setFocus(keepFocus, false);
+
+		if (activeId && activeClass) {
+			const field = container.querySelector(`.avpvh-at-segment[data-id="${cssEscape(activeId)}"] ${activeClass}`);
+			if (field) {
+				field.focus({ preventScroll: true });
+				if (selection) {
+					field.setSelectionRange(selection[0], selection[1]);
+				}
+			}
+		}
+	}
+
+	function showSummary() {
+		const panel = app.querySelector('#avpvh-at-summary-panel');
+		if (!panel || !current.summary) {
+			return;
+		}
+		panel.hidden = false;
+		const body = panel.querySelector('.avpvh-at-panel-body');
+		let box = body.querySelector('.avpvh-at-summary-result');
+		if (!box) {
+			box = document.createElement('div');
+			box.className = 'avpvh-at-summary-result';
+			body.prepend(box);
+		}
+		body.querySelector('.avpvh-at-summary-placeholder')?.remove();
+		box.innerHTML = `<h3>Samenvatting</h3>${current.summary}`;
 	}
 
 	function uniqueValues(segments, field) {
@@ -291,11 +423,16 @@
 				return;
 			}
 			try {
-				current = await api(`jobs/${current.id}/title`, {
+				const job = current;
+				const updated = await api(`jobs/${job.id}/title`, {
 					method: 'PUT',
 					body: JSON.stringify({ title })
 				});
-				app.querySelector('.avpvh-at-title-button').textContent = current.title;
+				// Only take the title: the response's segments would overwrite unsaved edits.
+				job.title = updated.title;
+				if (job === current) {
+					app.querySelector('.avpvh-at-title-button').textContent = job.title;
+				}
 				result.textContent = ' Naam opgeslagen.';
 			} catch (error) {
 				result.textContent = ` ${error.message}`;
@@ -330,58 +467,58 @@
 		</article>`;
 	}
 
-	function bindSegmentRows() {
-		app.querySelectorAll('.avpvh-at-segment').forEach((row) => {
-			const id = row.dataset.id;
-			const text = row.querySelector('textarea');
-			const speaker = row.querySelector('.avpvh-at-speaker');
-			const party = row.querySelector('.avpvh-at-party');
-			const change = () => {
-				const segment = current.segments.find((item) => item.id === id);
-				segment.text = text.value;
-				segment.speaker = speaker.value;
-				segment.party = party.value;
-				dirty.add(id);
-				scheduleSave();
-			};
-			if (config.canEdit) {
-				text.addEventListener('input', change);
-				speaker.addEventListener('input', () => {
-					const inferred = inferredParty(speaker.value);
-					if (inferred) {
-						party.value = inferred;
-					}
-					change();
-				});
-				party.addEventListener('input', change);
-				row.querySelector('.avpvh-at-insert-row').addEventListener('mousedown', (event) => event.preventDefault());
-				row.querySelector('.avpvh-at-insert-row').addEventListener('click', () => {
-					setFocus(id, false);
-					insertSegment();
-				});
-				const deleteButton = row.querySelector('.avpvh-at-delete-row');
-				deleteButton.addEventListener('click', () => {
-					setFocus(id, false);
-					if ('yes' !== deleteButton.dataset.confirm) {
-						deleteButton.dataset.confirm = 'yes';
-						deleteButton.textContent = 'Zeker?';
-						deleteButton.title = 'Klik nogmaals om deze zin te verwijderen';
-						setTimeout(() => {
-							if (deleteButton.isConnected) {
-								deleteButton.dataset.confirm = '';
-								deleteButton.textContent = '−';
-								deleteButton.title = 'Deze zin verwijderen';
-							}
-						}, 3000);
-						return;
-					}
-					deleteSegment();
-				});
+	function bindSegmentRow(row) {
+		const id = row.dataset.id;
+		const text = row.querySelector('textarea');
+		const speaker = row.querySelector('.avpvh-at-speaker');
+		const party = row.querySelector('.avpvh-at-party');
+		const change = () => {
+			const segment = current.segments.find((item) => item.id === id);
+			if (!segment) {
+				return;
 			}
-			row.addEventListener('mousedown', () => setFocus(id, false));
-			row.addEventListener('focusin', () => setFocus(id, false));
-			row.querySelector('.avpvh-at-time').addEventListener('click', () => playSegment(id));
-		});
+			segment.text = text.value;
+			segment.speaker = speaker.value;
+			segment.party = party.value;
+			markDirty(id);
+		};
+		if (config.canEdit) {
+			text.addEventListener('input', change);
+			speaker.addEventListener('input', () => {
+				const inferred = inferredParty(speaker.value);
+				if (inferred) {
+					party.value = inferred;
+				}
+				change();
+			});
+			party.addEventListener('input', change);
+			row.querySelector('.avpvh-at-insert-row').addEventListener('mousedown', (event) => event.preventDefault());
+			row.querySelector('.avpvh-at-insert-row').addEventListener('click', () => {
+				setFocus(id, false);
+				insertSegment();
+			});
+			const deleteButton = row.querySelector('.avpvh-at-delete-row');
+			deleteButton.addEventListener('click', () => {
+				setFocus(id, false);
+				if ('yes' !== deleteButton.dataset.confirm) {
+					deleteButton.dataset.confirm = 'yes';
+					deleteButton.textContent = 'Zeker?';
+					deleteButton.title = 'Klik nogmaals om deze zin te verwijderen';
+					setTimeout(() => {
+						if (deleteButton.isConnected) {
+							deleteButton.dataset.confirm = '';
+							deleteButton.textContent = '−';
+							deleteButton.title = 'Deze zin verwijderen';
+						}
+					}, 3000);
+					return;
+				}
+				deleteSegment();
+			});
+		}
+		row.addEventListener('mousedown', () => setFocus(id, false));
+		row.addEventListener('focusin', () => setFocus(id, false));
+		row.querySelector('.avpvh-at-time').addEventListener('click', () => playSegment(id));
 	}
 
 	function inferredParty(speaker) {
@@ -479,7 +616,7 @@
 			text = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
 			textarea.setRangeText('', textarea.selectionStart, textarea.selectionEnd, 'end');
 			source.text = textarea.value;
-			dirty.add(source.id);
+			markDirty(source.id);
 		}
 
 		const next = current.segments[index + 1];
@@ -495,11 +632,18 @@
 			inserted: true
 		};
 		current.segments.splice(index + 1, 0, segment);
-		dirty.add(id);
-		renderEditor();
+		const sourceRow = source ? app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(source.id)}"]`) : null;
+		if (sourceRow) {
+			sourceRow.insertAdjacentHTML('afterend', segmentRow(segment));
+		} else {
+			app.querySelector('#avpvh-at-segments').insertAdjacentHTML('afterbegin', segmentRow(segment));
+		}
+		const row = app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(id)}"]`);
+		bindSegmentRow(row);
+		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
 		setFocus(id);
-		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(id)}"] textarea`)?.focus();
-		scheduleSave();
+		row.querySelector('textarea')?.focus();
+		markDirty(id);
 	}
 
 	function deleteSegment() {
@@ -509,9 +653,11 @@
 			return;
 		}
 		const nextFocus = current.segments[index + 1]?.id || current.segments[index - 1]?.id || null;
-		current.segments.splice(index, 1);
+		const [removed] = current.segments.splice(index, 1);
 		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(focusedId)}"]`)?.remove();
-		dirty.add('__structure__');
+		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
+		dirty.delete(removed.id);
+		deleted.add(removed.id);
 		setFocus(nextFocus, true);
 		scheduleSave();
 	}
@@ -554,18 +700,22 @@
 		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 	}
 
-	function filterRows(event) {
-		const query = event.target.value.trim().toLocaleLowerCase();
+	function filterRows() {
+		applyFilter(true);
+	}
+
+	function applyFilter(moveToFirst) {
+		const query = (app.querySelector('#avpvh-at-search')?.value || '').trim().toLocaleLowerCase();
 		const visibleRows = [];
 		app.querySelectorAll('.avpvh-at-segment').forEach((row) => {
 			const segment = current.segments.find((item) => item.id === row.dataset.id);
-			row.hidden = Boolean(query) && !`${segment.text} ${segment.speaker} ${segment.party}`.toLocaleLowerCase().includes(query);
+			row.hidden = Boolean(query) && !`${segment?.text} ${segment?.speaker} ${segment?.party}`.toLocaleLowerCase().includes(query);
 			if (!row.hidden) {
 				visibleRows.push(row);
 			}
 		});
 		app.querySelector('#avpvh-at-count').textContent = query ? (visibleRows.length ? `${visibleRows.length} resultaat/resultaten` : 'Geen resultaten') : '';
-		if (query) {
+		if (query && moveToFirst) {
 			setFocus(visibleRows[0]?.dataset.id || null, true);
 		}
 	}
@@ -642,8 +792,11 @@
 						})
 					});
 					resultText.innerHTML = ` Opgeslagen. <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">Bekijk pagina</a> · <a href="${escapeHtml(result.edit_url)}">Bewerk in WordPress</a>`;
+					button.textContent = 'Pagina bijwerken';
+					panel.querySelector('summary strong').textContent = 'Transcriptiepagina bijwerken';
 				} catch (error) {
 					resultText.textContent = ` ${error.message}`;
+				} finally {
 					button.disabled = false;
 				}
 			});
@@ -662,35 +815,83 @@
 
 	async function flushSave() {
 		clearTimeout(saveTimer);
-		if (dirty.size) {
+		if (savePromise) {
+			await savePromise;
+		}
+		// The finished save may have scheduled a follow-up for later edits.
+		clearTimeout(saveTimer);
+		if (hasPendingChanges()) {
 			await save();
 		}
 	}
 
-	async function save() {
-		if (!dirty.size || saving) {
+	function save() {
+		if (!savePromise) {
+			savePromise = runSave().finally(() => {
+				savePromise = null;
+			});
+		}
+		return savePromise;
+	}
+
+	async function runSave() {
+		clearTimeout(saveTimer);
+		if (!current || conflicted || !hasPendingChanges()) {
 			return;
 		}
+		const job = current;
+		const sentDirty = new Map(dirty);
+		const sentDeleted = [...deleted];
+		let retry = false;
 		saving = true;
-		const dirtyIds = [...dirty];
+		saveSeq += 1;
 		setSaveState('Opslaan…');
 		try {
-			const result = await api(`jobs/${current.id}/segments`, {
+			const result = await api(`jobs/${job.id}/segments`, {
 				method: 'PUT',
-				body: JSON.stringify({ revision: current.revision, segments: current.segments, dirty_ids: dirtyIds })
+				body: JSON.stringify({ revision: job.revision, segments: job.segments, dirty_ids: [...sentDirty.keys()], deleted_ids: sentDeleted })
 			});
-			current.revision = result.revision;
-			dirtyIds.forEach((id) => dirty.delete(id));
-			setSaveState('Opgeslagen');
+			job.revision = result.revision;
+			conflictRetries = 0;
+			if (job === current) {
+				// Keep ids that were edited again while this request was in flight.
+				sentDirty.forEach((version, id) => {
+					if (dirty.get(id) === version) {
+						dirty.delete(id);
+					}
+				});
+				sentDeleted.forEach((id) => deleted.delete(id));
+				setSaveState(hasPendingChanges() ? 'Wijzigingen…' : 'Opgeslagen');
+			}
 		} catch (error) {
-			if (409 === error.status) {
-				notice('Er is een nieuwere versie. Herlaad de transcriptie om wijzigingen samen te voegen.', 'error');
-			} else {
-				setSaveState('Opslaan mislukt; nieuwe poging…');
-				saveTimer = setTimeout(save, 5000);
+			if (job === current) {
+				const newer = error.data?.data?.current;
+				if (409 === error.status && newer && conflictRetries < 2) {
+					// Take the newer server version, keep the unsaved local
+					// edits, insertions and deletions on top of it, and save again.
+					conflictRetries += 1;
+					applyRemote(newer, false);
+					notice('Er was een nieuwere versie; je wijzigingen zijn daarmee samengevoegd.', 'warning');
+				} else if (409 === error.status) {
+					conflicted = true;
+					setSaveState('Niet opgeslagen');
+					notice('Er is een nieuwere versie. Kopieer je laatste wijzigingen en herlaad de transcriptie om ze samen te voegen.', 'error');
+				} else {
+					retry = true;
+					setSaveState('Opslaan mislukt; nieuwe poging…');
+				}
 			}
 		} finally {
 			saving = false;
+			saveSeq += 1;
+		}
+		if (job !== current) {
+			return;
+		}
+		if (retry) {
+			saveTimer = setTimeout(save, 5000);
+		} else if (!conflicted && hasPendingChanges()) {
+			scheduleSave();
 		}
 	}
 
@@ -701,31 +902,106 @@
 		}
 	}
 
+	function shouldPoll() {
+		return Boolean(current) && (!['complete', 'failed'].includes(current.status) || Boolean(current.summary_pending));
+	}
+
 	async function poll() {
+		clearTimeout(pollTimer);
+		pollTimer = null;
 		if (!current) {
 			return;
 		}
+		const generation = viewGeneration;
+		const job = current;
+		const seq = saveSeq;
+		let delay = 3000;
 		try {
-			const remote = await api(`jobs/${current.id}`);
-			const local = new Map(current.segments.map((segment) => [segment.id, segment]));
-			remote.segments = remote.segments.map((segment) => dirty.has(segment.id) && local.has(segment.id) ? local.get(segment.id) : segment);
-			const segmentCountChanged = remote.segments.length !== current.segments.length;
-			current = remote;
-			const progress = app.querySelector('#avpvh-at-progress');
-			if (progress) {
-				progress.value = current.progress;
-				app.querySelector('#avpvh-at-percent').textContent = `${Math.round(current.progress)}%`;
-				app.querySelector('#avpvh-at-status').textContent = current.status;
+			const remote = await api(`jobs/${job.id}`);
+			if (generation !== viewGeneration || job !== current) {
+				return;
 			}
-			if (segmentCountChanged && !dirty.size) {
-				renderEditor();
-			}
-			if (!['complete', 'failed'].includes(current.status)) {
-				pollTimer = setTimeout(poll, 3000);
-			}
+			// A save that ran during this request makes the remote segments and
+			// revision older than the local ones; use only the job metadata then.
+			applyRemote(remote, saving || seq !== saveSeq);
 		} catch (error) {
-			pollTimer = setTimeout(poll, 5000);
+			if (generation !== viewGeneration || job !== current) {
+				return;
+			}
+			delay = 5000;
 		}
+		if (shouldPoll() && !pollTimer) {
+			pollTimer = setTimeout(poll, delay);
+		}
+	}
+
+	function applyRemote(remote, segmentsStale) {
+		const hadPlayer = Boolean(app.querySelector('#avpvh-at-player'));
+		const summaryChanged = (remote.summary || '') !== (current.summary || '');
+		['status', 'progress', 'duration', 'audio_url', 'summary', 'summary_pending', 'updated_at'].forEach((field) => {
+			current[field] = remote[field];
+		});
+
+		if (!segmentsStale) {
+			const merged = mergeRemoteSegments(remote.segments || []);
+			const changed = segmentsDiffer(current.segments, merged);
+			current.segments = merged;
+			current.revision = remote.revision;
+			if (changed) {
+				renderSegments();
+			}
+		}
+
+		const progress = app.querySelector('#avpvh-at-progress');
+		if (progress) {
+			progress.value = current.progress;
+			app.querySelector('#avpvh-at-percent').textContent = `${Math.round(current.progress)}%`;
+			app.querySelector('#avpvh-at-status').textContent = current.status;
+		}
+		// Add the player once audio becomes available; never swap the source of
+		// an existing player, which would interrupt playback.
+		if (!hadPlayer && current.audio_url && progress) {
+			progress.insertAdjacentHTML('afterend', playerHtml());
+			bindAudioSync();
+		}
+		if (summaryChanged) {
+			showSummary();
+		}
+	}
+
+	// Server segments, with unsaved local edits, insertions and deletions kept.
+	function mergeRemoteSegments(remoteSegments) {
+		const local = new Map(current.segments.map((segment) => [segment.id, segment]));
+		const remoteIds = new Set(remoteSegments.map((segment) => segment.id));
+		const merged = remoteSegments
+			.filter((segment) => !deleted.has(segment.id))
+			.map((segment) => (dirty.has(segment.id) && local.has(segment.id) ? local.get(segment.id) : segment));
+		current.segments.forEach((segment, index) => {
+			if (remoteIds.has(segment.id) || !dirty.has(segment.id)) {
+				return;
+			}
+			// Place an unsaved insertion after the nearest preceding local segment.
+			let position = 0;
+			for (let back = index - 1; back >= 0; back -= 1) {
+				const found = merged.findIndex((item) => item.id === current.segments[back].id);
+				if (found >= 0) {
+					position = found + 1;
+					break;
+				}
+			}
+			merged.splice(position, 0, segment);
+		});
+		return merged;
+	}
+
+	function segmentsDiffer(left, right) {
+		if (left.length !== right.length) {
+			return true;
+		}
+		return left.some((segment, index) => {
+			const other = right[index];
+			return segment.id !== other.id || segment.text !== other.text || segment.speaker !== other.speaker || segment.party !== other.party || segment.start !== other.start;
+		});
 	}
 
 	async function renderHistory() {
@@ -743,9 +1019,35 @@
 				if (!window.confirm('Deze versie terugzetten? De huidige versie blijft in de geschiedenis bewaard.')) {
 					return;
 				}
-				current = await api(`jobs/${current.id}/restore/${button.dataset.revision}`, { method: 'POST', body: '{}' });
-				dirty.clear();
-				renderEditor();
+				const job = current;
+				button.disabled = true;
+				try {
+					// Save pending edits first so they end up in the history too.
+					await flushSave();
+					clearTimeout(pollTimer);
+					saveSeq += 1;
+					const restored = await api(`jobs/${job.id}/restore/${button.dataset.revision}`, { method: 'POST', body: '{}' });
+					saveSeq += 1;
+					if (job !== current) {
+						return;
+					}
+					clearTimeout(saveTimer);
+					current = restored;
+					dirty = new Map();
+					deleted = new Set();
+					conflicted = false;
+					renderEditor();
+					if (shouldPoll()) {
+						pollTimer = setTimeout(poll, 3000);
+					}
+				} catch (error) {
+					saveSeq += 1;
+					button.disabled = false;
+					notice(error.message, 'error');
+					if (job === current && shouldPoll() && !pollTimer) {
+						pollTimer = setTimeout(poll, 3000);
+					}
+				}
 			}));
 		} catch (error) {
 			panel.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
@@ -762,10 +1064,11 @@
 		revealPanel(panel);
 		body.dataset.loaded = 'yes';
 		body.innerHTML = `${current.summary ? `<div class="avpvh-at-summary-result"><h3>Bestaande samenvatting</h3>${current.summary}</div>` : ''}
-			${config.summaryConfigured ? `<p class="description">Route: ${config.aiClientAvailable ? 'centrale WordPress AI Client' : 'direct ingestelde LLM-API'}.</p>` : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Configureer een WordPress AI-connector of vul onder Instellingen de directe LLM API-URL, API-key en het model in.</p>'}
-			<label>Procedurele toelichting <textarea id="avpvh-at-summary-procedure" rows="7">${escapeHtml(defaults.summary_procedure_prompt || defaults.summary_prompt || 'Werk uitsluitend op basis van de transcriptie. Maak duidelijk onderscheid tussen wat letterlijk is besproken en eventuele gevolgtrekkingen. Verzin geen feiten.')}</textarea></label>
+			${config.summaryConfigured ? `<p class="description">Route: ${summaryRoute()}.</p>` : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Configureer een WordPress AI-connector, vul onder Instellingen de directe LLM API-URL en het model in, of stel de transcriptieservice in.</p>'}
+			${current.summary_pending ? '<p class="description">Er wordt op de achtergrond een samenvatting gemaakt; deze verschijnt hier zodra hij klaar is.</p>' : ''}
+			<label>Procedurele toelichting <textarea id="avpvh-at-summary-procedure" rows="7">${escapeHtml(defaults.summary_procedure_prompt || '')}</textarea></label>
 			<p class="description">Beschrijf hier de werkwijze, structuur, zorgvuldigheid en gewenste vorm van het resultaat.</p>
-			<label>Inhoudelijke toelichting <textarea id="avpvh-at-summary-content" rows="7">${escapeHtml(defaults.summary_content_prompt || 'Behandel de deelnemers en rollen, kernpunten per onderwerp, standpunten per partij, besluiten, actiepunten, openstaande vragen en relevante tijdstippen.')}</textarea></label>
+			<label>Inhoudelijke toelichting <textarea id="avpvh-at-summary-content" rows="7">${escapeHtml(defaults.summary_content_prompt || '')}</textarea></label>
 			<p class="description">Beschrijf hier welke onderwerpen, vragen, partijen of accenten inhoudelijk extra aandacht moeten krijgen.</p>
 			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>Samenvatting maken</button>
 			${!config.summaryConfigured && config.canManage ? '<button id="avpvh-at-summary-settings" type="button" class="button">Open instellingen</button>' : ''}
@@ -774,37 +1077,57 @@
 		panel.querySelector('#avpvh-at-summary-settings')?.addEventListener('click', () => app.querySelector('[data-tab="settings"]').click());
 	}
 
+	function summaryRoute() {
+		if (config.aiClientAvailable) {
+			return 'centrale WordPress AI Client';
+		}
+		return defaults.summary_api_url ? 'direct ingestelde LLM-API' : 'transcriptieservice';
+	}
+
 	async function createSummary() {
 		const panel = app.querySelector('#avpvh-at-summary-panel');
 		const button = panel.querySelector('#avpvh-at-run-summary');
 		const resultText = panel.querySelector('#avpvh-at-summary-result');
 		const procedurePrompt = panel.querySelector('#avpvh-at-summary-procedure').value;
 		const contentPrompt = panel.querySelector('#avpvh-at-summary-content').value;
+		const job = current;
 		button.disabled = true;
 		resultText.textContent = ' Correcties opslaan en samenvatting maken…';
-		await flushSave();
 		try {
-			const result = await api(`jobs/${current.id}/summary`, {
+			await flushSave();
+			const result = await api(`jobs/${job.id}/summary`, {
 				method: 'POST',
 				body: JSON.stringify({ procedure_prompt: procedurePrompt, content_prompt: contentPrompt })
 			});
+			if (job !== current) {
+				return;
+			}
 			if (result.summary) {
 				current.summary = result.summary;
-				renderEditor();
+				current.summary_pending = false;
+				showSummary();
+				resultText.textContent = ' Samenvatting gemaakt.';
 			} else {
+				current.summary_pending = true;
 				resultText.textContent = ' De samenvatting is gestart en verschijnt zodra deze klaar is.';
+				poll();
 			}
 		} catch (error) {
 			resultText.textContent = ` ${error.message}`;
+		} finally {
 			button.disabled = false;
 		}
 	}
 
 	async function renderSettings() {
+		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
 		view.innerHTML = '<p class="avpvh-at-loading">Instellingen laden<span></span></p>';
 		try {
 			const settings = await api('settings');
+			if (generation !== viewGeneration) {
+				return;
+			}
 			view.innerHTML = `<section class="avpvh-at-card avpvh-at-settings">
 				<h2>Transcriptieservice</h2>
 				<p>De service-URL bepaalt met welke API de plugin praat. De gekozen engine, modelversie, prompt, glossary en blokgrootte worden bij iedere nieuwe opdracht aan die API meegestuurd.</p>
@@ -855,7 +1178,7 @@
 					});
 					Object.assign(defaults, updated);
 					config.aiClientAvailable = Boolean(updated.ai_client_available);
-					config.summaryConfigured = config.aiClientAvailable || Boolean(updated.summary_api_url && updated.summary_model && updated.summary_registered);
+					config.summaryConfigured = Boolean(updated.summary_configured);
 					if (updated.service_url && updated.license_registered) {
 						const result = await api('license/validate', { method: 'POST', body: '{}' });
 						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Instellingen opgeslagen; transcriptiesleutel geldig ✓' : ' Instellingen opgeslagen; transcriptiesleutel ongeldig';
@@ -867,7 +1190,9 @@
 				}
 			});
 		} catch (error) {
-			view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			if (generation === viewGeneration) {
+				view.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+			}
 		}
 	}
 
@@ -880,7 +1205,8 @@
 		if (!current) {
 			return;
 		}
-		const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
+		// Space keeps its native meaning on form fields and other controls.
+		const editing = Boolean(event.target.closest?.('input, textarea, select, button, a[href], summary, audio, video, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="checkbox"], [role="tab"]'));
 		if (event.ctrlKey && 'Space' === event.code) {
 			event.preventDefault();
 			toggleAudio();

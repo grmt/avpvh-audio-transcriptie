@@ -4,7 +4,7 @@ Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 0.8.2
+Stable tag: 0.8.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,17 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 == Changelog ==
 
+= 0.8.3 =
+
+* Fix search, speaker and party filters not hiding rows in the editor and on public pages.
+* Call the WordPress AI Client with its prompt-builder API (system instruction plus user text).
+* Never copy keys defined in wp-config.php into the database; keep percent-encoded keys and upload headers intact.
+* Prevent lost edits: atomic revision checks, refresh merges against the latest row, tombstones for deleted fragments, and safer saving, polling and navigation in the editor.
+* Enable summaries when only the transcription service or a keyless LLM API is configured, and load background summaries on completed jobs.
+* Hide publishing and summary controls from users without permission; allow repeated page updates and move or relabel existing block-navigation links.
+* Keep keyboard activation of buttons and links working; the Space shortcut only toggles audio outside controls.
+* Smaller job-list queries, no full editor re-render on insert or poll, a clean build directory, and JavaScript checks for both scripts.
+
 = 0.8.2 =
 
 * Split summary guidance into separate procedural and content-specific prompts.
@@ -139,6 +150,10 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Initial public development release.
 
 == Upgrade Notice ==
+
+= 0.8.3 =
+
+Fixes data-loss races in the editor, broken search filters, and WordPress AI Client summaries. Adds a database column, applied automatically.
 
 = 0.8.2 =
 

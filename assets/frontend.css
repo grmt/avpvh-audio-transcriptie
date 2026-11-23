@@ -50,6 +50,10 @@
 	min-height: 2.5rem;
 }
 
+.avpvh-at-public-segment[hidden] {
+	display: none;
+}
+
 .avpvh-at-public-segment {
 	display: grid;
 	grid-template-columns: 6rem 1fr;

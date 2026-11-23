@@ -18,6 +18,12 @@ final class AVPVH_AT_Plugin {
 	/** Maximum retained revisions per job. */
 	private const MAX_REVISIONS = 50;
 
+	/** Database schema version; bump when activate() changes a table. */
+	private const DB_VERSION = '2';
+
+	/** Seconds a requested background summary is polled for. */
+	private const SUMMARY_PENDING_TTL = 3600;
+
 	/**
 	 * Creates plugin tables.
 	 *
@@ -43,6 +49,7 @@ final class AVPVH_AT_Plugin {
 				progress decimal(5,2) NOT NULL DEFAULT 0,
 				duration decimal(12,3) NULL,
 				segments longtext NULL,
+				deleted_ids longtext NULL,
 				summary longtext NULL,
 				revision bigint unsigned NOT NULL DEFAULT 0,
 				created_at datetime NOT NULL,
@@ -65,6 +72,18 @@ final class AVPVH_AT_Plugin {
 				KEY job_revision (job_id, revision)
 			) {$charset_collate};"
 		);
+		update_option( 'avpvh_at_db_version', self::DB_VERSION, false );
+	}
+
+	/**
+	 * Applies schema changes after a plugin update without reactivation.
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade(): void {
+		if ( self::DB_VERSION !== get_option( 'avpvh_at_db_version' ) ) {
+			self::activate();
+		}
 	}
 
 	/**
@@ -73,6 +92,7 @@ final class AVPVH_AT_Plugin {
 	 * @return void
 	 */
 	public static function init(): void {
+		self::maybe_upgrade();
 		add_action( 'admin_menu', array( self::class, 'register_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( self::class, 'enqueue_assets' ) );
 		add_action( 'admin_init', array( self::class, 'add_privacy_policy_content' ) );
@@ -236,7 +256,7 @@ final class AVPVH_AT_Plugin {
 
 		$content = wpautop(
 			esc_html__(
-				'When an authorized user starts an audio transcription, the selected recording, file metadata, transcript segments, speaker labels, group labels, and optional summary instruction are sent to the transcription service configured by this site administrator. When a separate summary API is configured, the corrected transcript and summary instruction are sent to that API. Transcript text and up to 50 correction revisions are stored in the WordPress database. Consult the configured providers for their retention, privacy, and deletion terms.',
+				'Wanneer een bevoegde gebruiker een audiotranscriptie start, worden de gekozen opname, bestandsgegevens, transcriptiefragmenten, sprekerslabels, partijlabels en een eventuele samenvattingsinstructie verzonden naar de transcriptieservice die de sitebeheerder heeft ingesteld. Als er een aparte samenvattings-API of WordPress AI-provider is ingesteld, worden de gecorrigeerde transcriptie en de samenvattingsinstructie naar die dienst verzonden. De transcriptietekst en maximaal 50 correctierevisies worden in de WordPress-database bewaard. Raadpleeg de ingestelde aanbieders voor hun voorwaarden over bewaartermijn, privacy en verwijdering.',
 				'avpvh-audio-transcriptie'
 			),
 			false
@@ -301,7 +321,7 @@ final class AVPVH_AT_Plugin {
 				'canManage'         => current_user_can( 'manage_options' ),
 				'canEdit'           => current_user_can( 'upload_files' ),
 				'canPublish'        => current_user_can( 'publish_pages' ),
-				'summaryConfigured' => $ai_client_available || ( '' !== $settings['summary_api_url'] && '' !== $settings['summary_model'] && '' !== $settings['summary_api_key'] ),
+				'summaryConfigured' => self::summary_configured( $settings, $ai_client_available ),
 				'aiClientAvailable' => $ai_client_available,
 				'defaults'          => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
 				'i18n'              => array(
@@ -482,10 +502,26 @@ final class AVPVH_AT_Plugin {
 		return self::can_publish() && null !== self::get_row( absint( $request['id'] ) );
 	}
 
+	/**
+	 * Whether any summary route is usable: the WordPress AI Client, a direct
+	 * chat-completions API (key optional), or the transcription service.
+	 *
+	 * @param array     $settings            Normalized settings.
+	 * @param bool|null $ai_client_available Precomputed AI Client availability.
+	 * @return bool
+	 */
+	private static function summary_configured( array $settings, ?bool $ai_client_available = null ): bool {
+		$ai_client_available = $ai_client_available ?? self::ai_client_available();
+		return $ai_client_available
+			|| ( '' !== $settings['summary_api_url'] && '' !== $settings['summary_model'] )
+			|| ( '' !== $settings['service_url'] && '' !== $settings['license_key'] );
+	}
+
 	/** Returns public settings without exposing the secret. */
 	public static function get_settings(): array {
 		$settings = self::settings();
 		return array(
+			'summary_configured'       => self::summary_configured( $settings ),
 			'service_url'              => $settings['service_url'],
 			'license_registered'       => '' !== $settings['license_key'],
 			'license_hint'             => '' !== $settings['license_key'] ? '••••' . substr( $settings['license_key'], -4 ) : '',
@@ -513,9 +549,10 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function update_settings( WP_REST_Request $request ): array|WP_Error {
 		$current                  = self::settings();
+		$saved                    = (array) get_option( 'avpvh_at_settings', array() );
 		$service_url              = untrailingslashit( esc_url_raw( (string) $request->get_param( 'service_url' ) ) );
-		$license_key              = trim( sanitize_text_field( (string) $request->get_param( 'license_key' ) ) );
-		$license_key              = '' !== $license_key ? $license_key : $current['license_key'];
+		$license_key              = self::sanitize_secret( $request->get_param( 'license_key' ) );
+		$license_key              = '' !== $license_key ? $license_key : (string) ( $saved['license_key'] ?? '' );
 		$provider                 = sanitize_key( (string) $request->get_param( 'provider' ) );
 		$model                    = sanitize_text_field( (string) $request->get_param( 'default_model' ) );
 		$language                 = sanitize_key( (string) $request->get_param( 'default_language' ) );
@@ -523,8 +560,8 @@ final class AVPVH_AT_Plugin {
 		$glossary                 = sanitize_textarea_field( (string) $request->get_param( 'default_glossary' ) );
 		$chunk                    = min( 60, max( 1, absint( $request->get_param( 'chunk_minutes' ) ) ) );
 		$summary_url              = untrailingslashit( esc_url_raw( (string) $request->get_param( 'summary_api_url' ) ) );
-		$summary_key              = trim( sanitize_text_field( (string) $request->get_param( 'summary_api_key' ) ) );
-		$summary_key              = '' !== $summary_key ? $summary_key : $current['summary_api_key'];
+		$summary_key              = self::sanitize_secret( $request->get_param( 'summary_api_key' ) );
+		$summary_key              = '' !== $summary_key ? $summary_key : (string) ( $saved['summary_api_key'] ?? '' );
 		$summary_model            = sanitize_text_field( (string) $request->get_param( 'summary_model' ) );
 		$summary_procedure_prompt = sanitize_textarea_field( (string) $request->get_param( 'summary_procedure_prompt' ) );
 		$summary_content_prompt   = sanitize_textarea_field( (string) $request->get_param( 'summary_content_prompt' ) );
@@ -533,6 +570,14 @@ final class AVPVH_AT_Plugin {
 		}
 		if ( '' !== $summary_url && ( ! wp_http_validate_url( $summary_url ) || 'https' !== wp_parse_url( $summary_url, PHP_URL_SCHEME ) ) ) {
 			return new WP_Error( 'avpvh_at_invalid_summary_url', __( 'Gebruik een geldige HTTPS-URL voor de samenvattings-API.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
+
+		// Keys supplied through wp-config.php constants are never copied into the database.
+		if ( defined( 'AVPVH_AT_LICENSE_KEY' ) ) {
+			$license_key = '';
+		}
+		if ( defined( 'AVPVH_AT_SUMMARY_API_KEY' ) ) {
+			$summary_key = '';
 		}
 
 		update_option(
@@ -568,7 +613,7 @@ final class AVPVH_AT_Plugin {
 		global $wpdb;
 
 		$table = self::jobs_table();
-		$rows  = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
+		$rows  = $wpdb->get_results( "SELECT id, service_job_id, title, audio_name, audio_url, status, progress, duration, revision, updated_at FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 
 		return array_map(
 			static function ( object $row ): array {
@@ -616,8 +661,8 @@ final class AVPVH_AT_Plugin {
 			return new WP_Error( 'avpvh_at_invalid_service_response', __( 'De transcriptieservice gaf een onvolledig antwoord.', 'avpvh-audio-transcriptie' ), array( 'status' => 502 ) );
 		}
 
-		$now = current_time( 'mysql', true );
-		$wpdb->insert(
+		$now      = current_time( 'mysql', true );
+		$inserted = $wpdb->insert(
 			self::jobs_table(),
 			array(
 				'service_job_id' => sanitize_text_field( (string) $remote['job_id'] ),
@@ -631,7 +676,10 @@ final class AVPVH_AT_Plugin {
 			)
 		);
 
-		$row = self::get_row( (int) $wpdb->insert_id );
+		$row = $inserted ? self::get_row( (int) $wpdb->insert_id ) : null;
+		if ( null === $row ) {
+			return new WP_Error( 'avpvh_at_job_not_stored', __( 'De transcriptie kon niet in de database worden opgeslagen.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+		}
 		return array(
 			'job'            => self::present_job( $row ),
 			'upload_url'     => esc_url_raw( (string) $remote['upload_url'] ),
@@ -670,7 +718,8 @@ final class AVPVH_AT_Plugin {
 			),
 			array( 'id' => absint( $request['id'] ) )
 		);
-		return self::present_job( self::get_row( absint( $request['id'] ) ) );
+		$row = self::require_row( absint( $request['id'] ) );
+		return is_wp_error( $row ) ? $row : self::present_job( $row );
 	}
 
 	/**
@@ -681,7 +730,10 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function upload_complete( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
-		$row    = self::get_row( absint( $request['id'] ) );
+		$row = self::require_row( absint( $request['id'] ) );
+		if ( is_wp_error( $row ) ) {
+			return $row;
+		}
 		$remote = self::service_request( 'POST', '/v1/jobs/' . rawurlencode( $row->service_job_id ) . '/upload-complete', array() );
 		if ( is_wp_error( $remote ) ) {
 			return $remote;
@@ -696,7 +748,8 @@ final class AVPVH_AT_Plugin {
 			array( 'id' => $row->id )
 		);
 
-		return self::present_job( self::get_row( (int) $row->id ) );
+		$row = self::require_row( (int) $row->id );
+		return is_wp_error( $row ) ? $row : self::present_job( $row );
 	}
 
 	/**
@@ -707,20 +760,17 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function save_segments( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
-		$row      = self::get_row( absint( $request['id'] ) );
+		$row = self::require_row( absint( $request['id'] ) );
+		if ( is_wp_error( $row ) ) {
+			return $row;
+		}
 		$revision = absint( $request->get_param( 'revision' ) );
 		$segments = $request->get_param( 'segments' );
 		$dirty    = array_map( 'strval', (array) $request->get_param( 'dirty_ids' ) );
+		$deleted  = array_values( array_filter( array_map( 'sanitize_text_field', array_map( 'strval', (array) $request->get_param( 'deleted_ids' ) ) ) ) );
 
 		if ( $revision !== (int) $row->revision ) {
-			return new WP_Error(
-				'avpvh_at_revision_conflict',
-				__( 'Er is een nieuwere versie. Herlaad de transcriptie om wijzigingen samen te voegen.', 'avpvh-audio-transcriptie' ),
-				array(
-					'status'  => 409,
-					'current' => self::present_job( $row ),
-				)
-			);
+			return self::revision_conflict( $row );
 		}
 
 		if ( ! is_array( $segments ) || 100000 < count( $segments ) ) {
@@ -731,11 +781,21 @@ final class AVPVH_AT_Plugin {
 		foreach ( self::decode_segments( $row->segments ) as $segment ) {
 			$existing[ (string) ( $segment['id'] ?? '' ) ] = $segment;
 		}
+		$tombstones = array_values( array_unique( array_merge( self::decode_segments( $row->deleted_ids ), $deleted ) ) );
+		$removed    = array_flip( $tombstones );
 
 		$clean = array();
+		$seen  = array();
 		foreach ( $segments as $segment ) {
-			$id      = sanitize_text_field( (string) ( $segment['id'] ?? '' ) );
-			$clean[] = array(
+			if ( ! is_array( $segment ) ) {
+				continue;
+			}
+			$id = sanitize_text_field( (string) ( $segment['id'] ?? '' ) );
+			if ( isset( $removed[ $id ] ) || isset( $seen[ $id ] ) ) {
+				continue;
+			}
+			$seen[ $id ] = true;
+			$clean[]     = array(
 				'id'       => $id,
 				'start'    => max( 0, (float) ( $segment['start'] ?? 0 ) ),
 				'end'      => max( 0, (float) ( $segment['end'] ?? 0 ) ),
@@ -747,22 +807,64 @@ final class AVPVH_AT_Plugin {
 			);
 		}
 
-		self::store_revision( $row );
+		// Keep stored segments the browser has not received yet (for example
+		// fragments that arrived from the service after its last poll).
+		$unseen = false;
+		foreach ( $existing as $id => $segment ) {
+			if ( ! isset( $seen[ $id ] ) && ! isset( $removed[ $id ] ) ) {
+				$clean[] = self::sanitize_remote_segment( $segment );
+				$unseen  = true;
+			}
+		}
+		if ( $unseen ) {
+			self::sort_segments( $clean );
+		}
+
 		$new_revision = $revision + 1;
-		$wpdb->update(
+		$updated      = $wpdb->update(
 			self::jobs_table(),
 			array(
-				'segments'   => wp_json_encode( $clean ),
-				'revision'   => $new_revision,
-				'updated_at' => current_time( 'mysql', true ),
+				'segments'    => wp_json_encode( $clean ),
+				'deleted_ids' => wp_json_encode( $tombstones ),
+				'revision'    => $new_revision,
+				'updated_at'  => current_time( 'mysql', true ),
 			),
-			array( 'id' => $row->id )
+			array(
+				'id'       => $row->id,
+				'revision' => $revision,
+			)
 		);
+		if ( false === $updated ) {
+			return new WP_Error( 'avpvh_at_save_failed', __( 'De correcties konden niet worden opgeslagen.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+		}
+		if ( 1 > $updated ) {
+			$fresh = self::get_row( (int) $row->id );
+			return null === $fresh ? self::missing_job() : self::revision_conflict( $fresh );
+		}
+
+		self::store_revision( $row );
 		self::trim_revisions( (int) $row->id );
 
 		return array(
 			'ok'       => true,
 			'revision' => $new_revision,
+		);
+	}
+
+	/**
+	 * Builds the 409 response for a stale revision.
+	 *
+	 * @param object $row Current job row.
+	 * @return WP_Error
+	 */
+	private static function revision_conflict( object $row ): WP_Error {
+		return new WP_Error(
+			'avpvh_at_revision_conflict',
+			__( 'Er is een nieuwere versie. Herlaad de transcriptie om wijzigingen samen te voegen.', 'avpvh-audio-transcriptie' ),
+			array(
+				'status'  => 409,
+				'current' => self::present_job( $row ),
+			)
 		);
 	}
 
@@ -869,8 +971,11 @@ final class AVPVH_AT_Plugin {
 	 * @return array|WP_Error
 	 */
 	public static function publish_page( WP_REST_Request $request ): array|WP_Error {
-		$job_id        = absint( $request['id'] );
-		$job           = self::get_row( $job_id );
+		$job_id = absint( $request['id'] );
+		$job    = self::require_row( $job_id );
+		if ( is_wp_error( $job ) ) {
+			return $job;
+		}
 		$page_id       = self::published_page_id( $job_id );
 		$title         = sanitize_text_field( (string) $request->get_param( 'title' ) );
 		$status        = 'publish' === $request->get_param( 'status' ) ? 'publish' : 'draft';
@@ -888,6 +993,12 @@ final class AVPVH_AT_Plugin {
 		if ( $page_id ) {
 			$postdata['ID'] = $page_id;
 		}
+		if ( ( $menu_id || $navigation_id ) && ! current_user_can( 'edit_theme_options' ) ) {
+			return new WP_Error( 'avpvh_at_menu_forbidden', __( 'Je mag geen WordPress-menu wijzigen.', 'avpvh-audio-transcriptie' ), array( 'status' => 403 ) );
+		}
+		if ( ( $menu_id || $navigation_id ) && 'publish' !== $status ) {
+			return new WP_Error( 'avpvh_at_menu_requires_publish', __( 'Publiceer de pagina voordat je deze aan een menu toevoegt.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+		}
 
 		$page_id = wp_insert_post( wp_slash( $postdata ), true );
 		if ( is_wp_error( $page_id ) ) {
@@ -895,14 +1006,9 @@ final class AVPVH_AT_Plugin {
 		}
 		update_post_meta( $page_id, '_avpvh_at_job_id', $job_id );
 
-		$menu_item_id = absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) );
+		$menu_item_id      = absint( get_post_meta( $page_id, '_avpvh_at_menu_item_id', true ) );
+		$old_navigation_id = absint( get_post_meta( $page_id, '_avpvh_at_navigation_id', true ) );
 		if ( $menu_id ) {
-			if ( ! current_user_can( 'edit_theme_options' ) ) {
-				return new WP_Error( 'avpvh_at_menu_forbidden', __( 'Je mag geen WordPress-menu wijzigen.', 'avpvh-audio-transcriptie' ), array( 'status' => 403 ) );
-			}
-			if ( 'publish' !== $status ) {
-				return new WP_Error( 'avpvh_at_menu_requires_publish', __( 'Publiceer de pagina voordat je deze aan een menu toevoegt.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
-			}
 			$menu = wp_get_nav_menu_object( $menu_id );
 			if ( ! $menu ) {
 				return new WP_Error( 'avpvh_at_menu_missing', __( 'Het gekozen menu bestaat niet meer.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
@@ -937,42 +1043,52 @@ final class AVPVH_AT_Plugin {
 				return $menu_item_id;
 			}
 			update_post_meta( $page_id, '_avpvh_at_menu_item_id', $menu_item_id );
+
+			// The page moved from a block navigation to a classic menu.
+			if ( $old_navigation_id ) {
+				$removed = self::remove_page_from_navigation( $old_navigation_id, (int) $page_id );
+				if ( is_wp_error( $removed ) ) {
+					return $removed;
+				}
+				delete_post_meta( $page_id, '_avpvh_at_navigation_id' );
+				delete_post_meta( $page_id, '_avpvh_at_navigation_parent' );
+			}
 		}
 
 		if ( $navigation_id ) {
-			if ( ! current_user_can( 'edit_theme_options' ) ) {
-				return new WP_Error( 'avpvh_at_navigation_forbidden', __( 'Je mag de WordPress-navigatie niet wijzigen.', 'avpvh-audio-transcriptie' ), array( 'status' => 403 ) );
-			}
-			if ( 'publish' !== $status ) {
-				return new WP_Error( 'avpvh_at_navigation_requires_publish', __( 'Publiceer de pagina voordat je deze aan de navigatie toevoegt.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
-			}
 			$navigation = get_post( $navigation_id );
 			if ( ! $navigation || 'wp_navigation' !== $navigation->post_type ) {
 				return new WP_Error( 'avpvh_at_navigation_missing', __( 'De gekozen bloknavigatie bestaat niet meer.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
 			}
-			$blocks = parse_blocks( $navigation->post_content );
-			if ( ! self::navigation_contains_page( $blocks, (int) $page_id ) ) {
-				$link_markup = get_comment_delimited_block_content(
-					'core/navigation-link',
-					array(
-						'label' => get_the_title( $page_id ),
-						'kind'  => 'post-type',
-						'type'  => 'page',
-						'id'    => (int) $page_id,
-						'url'   => get_permalink( $page_id ),
-					),
-					''
-				);
-				$link_blocks = parse_blocks( $link_markup );
-				$path        = str_starts_with( $parent_ref, 'block:' ) ? substr( $parent_ref, 6 ) : '';
-				if ( ! self::append_navigation_block( $blocks, $path, $link_blocks[0] ) ) {
-					return new WP_Error( 'avpvh_at_navigation_parent_missing', __( 'Het gekozen onderdeel bestaat niet meer in de bloknavigatie.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
-				}
+			$blocks      = parse_blocks( $navigation->post_content );
+			$original    = serialize_blocks( $blocks );
+			$link_markup = get_comment_delimited_block_content(
+				'core/navigation-link',
+				array(
+					'label'        => get_the_title( $page_id ),
+					'kind'         => 'post-type',
+					'type'         => 'page',
+					'id'           => (int) $page_id,
+					'url'          => get_permalink( $page_id ),
+					'avpvhAtFresh' => true,
+				),
+				''
+			);
+			$link_blocks = parse_blocks( $link_markup );
+			$path        = str_starts_with( $parent_ref, 'block:' ) ? substr( $parent_ref, 6 ) : '';
+			// Place (or update) the marked link first so the selected path still
+			// points at the right submenu, then drop other links to this page.
+			if ( ! self::place_navigation_link( $blocks, $path, $link_blocks[0], (int) $page_id ) ) {
+				return new WP_Error( 'avpvh_at_navigation_parent_missing', __( 'Het gekozen onderdeel bestaat niet meer in de bloknavigatie.', 'avpvh-audio-transcriptie' ), array( 'status' => 400 ) );
+			}
+			$blocks  = self::prune_navigation_links( $blocks, (int) $page_id );
+			$content = serialize_blocks( $blocks );
+			if ( $content !== $original ) {
 				$updated = wp_update_post(
 					wp_slash(
 						array(
 							'ID'           => $navigation_id,
-							'post_content' => serialize_blocks( $blocks ),
+							'post_content' => $content,
 						)
 					),
 					true
@@ -980,6 +1096,19 @@ final class AVPVH_AT_Plugin {
 				if ( is_wp_error( $updated ) ) {
 					return $updated;
 				}
+			}
+
+			// The page moved to another navigation or from a classic menu.
+			if ( $old_navigation_id && $old_navigation_id !== $navigation_id ) {
+				$removed = self::remove_page_from_navigation( $old_navigation_id, (int) $page_id );
+				if ( is_wp_error( $removed ) ) {
+					return $removed;
+				}
+			}
+			if ( $menu_item_id ) {
+				wp_delete_post( $menu_item_id, true );
+				delete_post_meta( $page_id, '_avpvh_at_menu_item_id' );
+				$menu_item_id = 0;
 			}
 			update_post_meta( $page_id, '_avpvh_at_navigation_id', $navigation_id );
 			update_post_meta( $page_id, '_avpvh_at_navigation_parent', $parent_ref );
@@ -1003,28 +1132,48 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function restore_revision( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
-		$job   = self::get_row( absint( $request['id'] ) );
+		$job = self::require_row( absint( $request['id'] ) );
+		if ( is_wp_error( $job ) ) {
+			return $job;
+		}
 		$table = self::revisions_table();
 		$old   = $wpdb->get_row(
-			$wpdb->prepare( "SELECT * FROM {$table} WHERE job_id = %d AND revision = %d", $job->id, absint( $request['revision'] ) ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
+			$wpdb->prepare( "SELECT * FROM {$table} WHERE job_id = %d AND revision = %d ORDER BY id DESC LIMIT 1", $job->id, absint( $request['revision'] ) ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 		);
 
 		if ( null === $old ) {
 			return new WP_Error( 'avpvh_at_revision_missing', __( 'Versie niet gevonden.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
 		}
 
-		self::store_revision( $job );
-		$wpdb->update(
+		// Segments brought back by the restore are no longer deleted.
+		$restored_ids = array_flip( array_map( static fn( $segment ) => (string) ( $segment['id'] ?? '' ), self::decode_segments( $old->segments ) ) );
+		$tombstones   = array_values( array_filter( self::decode_segments( $job->deleted_ids ), static fn( $id ) => ! isset( $restored_ids[ (string) $id ] ) ) );
+
+		$updated = $wpdb->update(
 			self::jobs_table(),
 			array(
-				'segments'   => $old->segments,
-				'revision'   => (int) $job->revision + 1,
-				'updated_at' => current_time( 'mysql', true ),
+				'segments'    => $old->segments,
+				'deleted_ids' => wp_json_encode( $tombstones ),
+				'revision'    => (int) $job->revision + 1,
+				'updated_at'  => current_time( 'mysql', true ),
 			),
-			array( 'id' => $job->id )
+			array(
+				'id'       => $job->id,
+				'revision' => $job->revision,
+			)
 		);
+		if ( false === $updated ) {
+			return new WP_Error( 'avpvh_at_save_failed', __( 'De versie kon niet worden teruggezet.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+		}
+		if ( 1 > $updated ) {
+			$fresh = self::get_row( (int) $job->id );
+			return null === $fresh ? self::missing_job() : self::revision_conflict( $fresh );
+		}
+		self::store_revision( $job );
+		self::trim_revisions( (int) $job->id );
 
-		return self::present_job( self::get_row( (int) $job->id ) );
+		$row = self::require_row( (int) $job->id );
+		return is_wp_error( $row ) ? $row : self::present_job( $row );
 	}
 
 	/**
@@ -1035,7 +1184,10 @@ final class AVPVH_AT_Plugin {
 	 */
 	public static function create_summary( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
-		$row              = self::get_row( absint( $request['id'] ) );
+		$row = self::require_row( absint( $request['id'] ) );
+		if ( is_wp_error( $row ) ) {
+			return $row;
+		}
 		$settings         = self::settings();
 		$procedure_prompt = sanitize_textarea_field( (string) $request->get_param( 'procedure_prompt' ) );
 		$content_prompt   = sanitize_textarea_field( (string) $request->get_param( 'content_prompt' ) );
@@ -1066,8 +1218,9 @@ final class AVPVH_AT_Plugin {
 			return $remote;
 		}
 
-		if ( isset( $remote['summary'] ) ) {
-			$remote['summary'] = wp_kses_post( $remote['summary'] );
+		if ( isset( $remote['summary'] ) && '' !== trim( (string) $remote['summary'] ) ) {
+			delete_transient( self::summary_pending_key( (int) $row->id ) );
+			$remote['summary'] = wp_kses_post( (string) $remote['summary'] );
 			$wpdb->update(
 				self::jobs_table(),
 				array(
@@ -1076,9 +1229,23 @@ final class AVPVH_AT_Plugin {
 				),
 				array( 'id' => $row->id )
 			);
+		} else {
+			// The service generates the summary in the background; keep polling it.
+			set_transient( self::summary_pending_key( (int) $row->id ), 1, self::SUMMARY_PENDING_TTL );
+			$remote['summary_pending'] = true;
 		}
 
 		return $remote;
+	}
+
+	/**
+	 * Transient key marking a background summary that has not arrived yet.
+	 *
+	 * @param int $job_id Local job ID.
+	 * @return string
+	 */
+	private static function summary_pending_key( int $job_id ): string {
+		return 'avpvh_at_summary_pending_' . $job_id;
 	}
 
 	/**
@@ -1096,18 +1263,16 @@ final class AVPVH_AT_Plugin {
 			$lines[] = '[' . self::format_time( (float) ( $segment['start'] ?? 0 ) ) . '] ' . ( $label ? $label . ': ' : '' ) . (string) ( $segment['text'] ?? '' );
 		}
 
-		$result = wp_ai_client_prompt(
-			array(
-				array(
-					'role'    => 'system',
-					'content' => $procedure_prompt,
-				),
-				array(
-					'role'    => 'user',
-					'content' => ( $content_prompt ? "Inhoudelijke toelichting:\n" . $content_prompt . "\n\n" : '' ) . "Transcriptie:\n" . implode( "\n", $lines ),
-				),
-			)
-		)->generate_text();
+		$user_text = ( $content_prompt ? "Inhoudelijke toelichting:\n" . $content_prompt . "\n\n" : '' ) . "Transcriptie:\n" . implode( "\n", $lines );
+		try {
+			$builder = wp_ai_client_prompt( $user_text );
+			if ( '' !== $procedure_prompt ) {
+				$builder = $builder->using_system_instruction( $procedure_prompt );
+			}
+			$result = $builder->generate_text();
+		} catch ( Throwable $error ) {
+			return new WP_Error( 'avpvh_at_ai_client_error', sanitize_text_field( $error->getMessage() ), array( 'status' => 502 ) );
+		}
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -1186,15 +1351,21 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Refreshes a job while preserving manual edits.
 	 *
+	 * The service request can take up to the HTTP timeout, so the merge runs on
+	 * a row re-read after the request and is written only if no save bumped the
+	 * revision in the meantime; otherwise it is retried on the newer row.
+	 *
 	 * @param object|null $row Job row.
 	 * @return object Job row or WP_Error instance.
 	 */
 	private static function refresh_job( ?object $row ): object {
 		if ( null === $row ) {
-			return new WP_Error( 'avpvh_at_job_missing', __( 'Transcriptie niet gevonden.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
+			return self::missing_job();
 		}
 
-		if ( in_array( $row->status, array( 'complete', 'failed' ), true ) ) {
+		$final           = in_array( $row->status, array( 'complete', 'failed' ), true );
+		$summary_pending = (bool) get_transient( self::summary_pending_key( (int) $row->id ) );
+		if ( $final && ! $summary_pending ) {
 			return $row;
 		}
 
@@ -1203,28 +1374,79 @@ final class AVPVH_AT_Plugin {
 			return $remote;
 		}
 
-		$update = array(
-			'status'     => sanitize_key( (string) ( $remote['status'] ?? $row->status ) ),
-			'progress'   => min( 100, max( 0, (float) ( $remote['progress'] ?? $row->progress ) ) ),
-			'updated_at' => current_time( 'mysql', true ),
-		);
-
-		if ( isset( $remote['duration'] ) ) {
-			$update['duration'] = max( 0, (float) $remote['duration'] );
-		}
-		if ( isset( $remote['playback_url'] ) ) {
-			$update['audio_url'] = esc_url_raw( (string) $remote['playback_url'] );
-		}
-		if ( isset( $remote['segments'] ) && is_array( $remote['segments'] ) ) {
-			$update['segments'] = wp_json_encode( self::merge_segments( self::decode_segments( $row->segments ), $remote['segments'] ) );
-		}
-		if ( isset( $remote['summary'] ) ) {
-			$update['summary'] = wp_kses_post( $remote['summary'] );
-		}
-
 		global $wpdb;
-		$wpdb->update( self::jobs_table(), $update, array( 'id' => $row->id ) );
-		return self::get_row( (int) $row->id );
+		$has_summary = isset( $remote['summary'] ) && '' !== trim( (string) $remote['summary'] );
+		if ( $has_summary ) {
+			delete_transient( self::summary_pending_key( (int) $row->id ) );
+		}
+
+		// A finished job only needs the background summary.
+		if ( $final ) {
+			if ( $has_summary ) {
+				$wpdb->update(
+					self::jobs_table(),
+					array(
+						'summary'    => wp_kses_post( (string) $remote['summary'] ),
+						'updated_at' => current_time( 'mysql', true ),
+					),
+					array( 'id' => $row->id )
+				);
+			}
+			return self::require_row( (int) $row->id );
+		}
+
+		for ( $attempt = 0; $attempt < 3; $attempt++ ) {
+			$fresh = self::get_row( (int) $row->id );
+			if ( null === $fresh ) {
+				return self::missing_job();
+			}
+
+			$update = array(
+				'status'     => sanitize_key( (string) ( $remote['status'] ?? $fresh->status ) ),
+				'progress'   => min( 100, max( 0, (float) ( $remote['progress'] ?? $fresh->progress ) ) ),
+				'updated_at' => current_time( 'mysql', true ),
+			);
+			if ( isset( $remote['duration'] ) ) {
+				$update['duration'] = max( 0, (float) $remote['duration'] );
+			}
+			if ( isset( $remote['playback_url'] ) ) {
+				$update['audio_url'] = esc_url_raw( (string) $remote['playback_url'] );
+			}
+			if ( isset( $remote['segments'] ) && is_array( $remote['segments'] ) ) {
+				$update['segments'] = wp_json_encode(
+					self::merge_segments(
+						self::decode_segments( $fresh->segments ),
+						$remote['segments'],
+						self::decode_segments( $fresh->deleted_ids )
+					)
+				);
+			}
+			if ( $has_summary ) {
+				$update['summary'] = wp_kses_post( (string) $remote['summary'] );
+			}
+
+			$updated = $wpdb->update(
+				self::jobs_table(),
+				$update,
+				array(
+					'id'       => $fresh->id,
+					'revision' => $fresh->revision,
+				)
+			);
+			if ( false === $updated ) {
+				return new WP_Error( 'avpvh_at_refresh_failed', __( 'De voortgang kon niet worden opgeslagen.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+			}
+			// Zero rows means either nothing changed or a save won the race.
+			$current = self::get_row( (int) $row->id );
+			if ( null === $current ) {
+				return self::missing_job();
+			}
+			if ( 0 < $updated || (int) $current->revision === (int) $fresh->revision ) {
+				return $current;
+			}
+		}
+
+		return self::require_row( (int) $row->id );
 	}
 
 	/**
@@ -1232,17 +1454,26 @@ final class AVPVH_AT_Plugin {
 	 *
 	 * @param array $local_segments  Locally stored segments.
 	 * @param array $remote_segments Service-provided segments.
+	 * @param array $deleted_ids     IDs of segments an editor removed.
 	 * @return array
 	 */
-	private static function merge_segments( array $local_segments, array $remote_segments ): array {
+	private static function merge_segments( array $local_segments, array $remote_segments, array $deleted_ids = array() ): array {
 		$local = array();
 		foreach ( $local_segments as $segment ) {
 			$local[ (string) ( $segment['id'] ?? '' ) ] = $segment;
 		}
+		$removed = array_flip( array_map( 'strval', $deleted_ids ) );
 
 		$merged = array();
 		foreach ( $remote_segments as $remote ) {
+			if ( ! is_array( $remote ) ) {
+				continue;
+			}
 			$id = sanitize_text_field( (string) ( $remote['id'] ?? '' ) );
+			if ( isset( $removed[ $id ] ) ) {
+				unset( $local[ $id ] );
+				continue;
+			}
 			if ( isset( $local[ $id ] ) && ! empty( $local[ $id ]['manual'] ) ) {
 				foreach ( array( 'text', 'speaker', 'party', 'manual' ) as $field ) {
 					$remote[ $field ] = $local[ $id ][ $field ] ?? '';
@@ -1258,13 +1489,26 @@ final class AVPVH_AT_Plugin {
 			}
 		}
 
-		usort(
-			$merged,
-			static function ( array $left, array $right ): int {
-				return $left['start'] <=> $right['start'];
+		self::sort_segments( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sorts segments by start time, keeping the existing order for ties.
+	 *
+	 * @param array $segments Segments, sorted in place.
+	 * @return void
+	 */
+	private static function sort_segments( array &$segments ): void {
+		$order = array_keys( $segments );
+		$keyed = array_combine( $order, $segments );
+		uksort(
+			$keyed,
+			static function ( int $left, int $right ) use ( $keyed ): int {
+				return array( (float) $keyed[ $left ]['start'], $left ) <=> array( (float) $keyed[ $right ]['start'], $right );
 			}
 		);
-		return $merged;
+		$segments = array_values( $keyed );
 	}
 
 	/**
@@ -1344,8 +1588,8 @@ final class AVPVH_AT_Plugin {
 			'summary_api_url'          => untrailingslashit( (string) ( $saved['summary_api_url'] ?? '' ) ),
 			'summary_api_key'          => defined( 'AVPVH_AT_SUMMARY_API_KEY' ) ? (string) AVPVH_AT_SUMMARY_API_KEY : (string) ( $saved['summary_api_key'] ?? '' ),
 			'summary_model'            => sanitize_text_field( (string) ( $saved['summary_model'] ?? '' ) ),
-			'summary_procedure_prompt' => sanitize_textarea_field( (string) ( $saved['summary_procedure_prompt'] ?? $saved['summary_prompt'] ?? 'Werk uitsluitend op basis van de transcriptie. Maak duidelijk onderscheid tussen wat letterlijk is besproken en eventuele gevolgtrekkingen. Verzin geen feiten.' ) ),
-			'summary_content_prompt'   => sanitize_textarea_field( (string) ( $saved['summary_content_prompt'] ?? 'Behandel de deelnemers en rollen, kernpunten per onderwerp, standpunten per partij, besluiten, actiepunten, openstaande vragen en relevante tijdstippen.' ) ),
+			'summary_procedure_prompt' => sanitize_textarea_field( (string) ( $saved['summary_procedure_prompt'] ?? $saved['summary_prompt'] ?? __( 'Werk uitsluitend op basis van de transcriptie. Maak duidelijk onderscheid tussen wat letterlijk is besproken en eventuele gevolgtrekkingen. Verzin geen feiten.', 'avpvh-audio-transcriptie' ) ) ),
+			'summary_content_prompt'   => sanitize_textarea_field( (string) ( $saved['summary_content_prompt'] ?? __( 'Behandel de deelnemers en rollen, kernpunten per onderwerp, standpunten per partij, besluiten, actiepunten, openstaande vragen en relevante tijdstippen.', 'avpvh-audio-transcriptie' ) ) ),
 		);
 	}
 
@@ -1420,34 +1664,38 @@ final class AVPVH_AT_Plugin {
 	}
 
 	/**
-	 * Checks whether a navigation already links to a page.
+	 * Whether a parsed block is a navigation link to the given page.
 	 *
-	 * @param array $blocks  Parsed navigation blocks.
+	 * @param mixed $block   Parsed block.
 	 * @param int   $page_id Page ID.
 	 * @return bool
 	 */
-	private static function navigation_contains_page( array $blocks, int $page_id ): bool {
-		foreach ( $blocks as $block ) {
-			if ( 'core/navigation-link' === ( $block['blockName'] ?? '' ) && absint( $block['attrs']['id'] ?? 0 ) === $page_id ) {
-				return true;
-			}
-			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) && self::navigation_contains_page( $block['innerBlocks'], $page_id ) ) {
-				return true;
-			}
-		}
-		return false;
+	private static function is_page_link( mixed $block, int $page_id ): bool {
+		return is_array( $block )
+			&& 'core/navigation-link' === ( $block['blockName'] ?? '' )
+			&& absint( $block['attrs']['id'] ?? 0 ) === $page_id;
 	}
 
 	/**
-	 * Appends a link at the root or inside a selected navigation submenu.
+	 * Puts a page link at the root or inside a selected navigation submenu.
+	 * An existing link to the page in that place is updated instead of
+	 * duplicated. The placed link carries the avpvhAtFresh marker, which
+	 * prune_navigation_links() removes.
 	 *
-	 * @param array  $blocks Parsed navigation blocks, updated in place.
-	 * @param string $path   Dot-separated block index path, or empty for root.
-	 * @param array  $link   Parsed navigation-link block.
+	 * @param array  $blocks  Parsed navigation blocks, updated in place.
+	 * @param string $path    Dot-separated block index path, or empty for root.
+	 * @param array  $link    Parsed navigation-link block with the marker set.
+	 * @param int    $page_id Page ID.
 	 * @return bool
 	 */
-	private static function append_navigation_block( array &$blocks, string $path, array $link ): bool {
+	private static function place_navigation_link( array &$blocks, string $path, array $link, int $page_id ): bool {
 		if ( '' === $path ) {
+			foreach ( array_keys( $blocks ) as $index ) {
+				if ( self::is_page_link( $blocks[ $index ], $page_id ) ) {
+					$blocks[ $index ]['attrs'] = array_merge( (array) $blocks[ $index ]['attrs'], $link['attrs'] );
+					return true;
+				}
+			}
 			$blocks[] = $link;
 			return true;
 		}
@@ -1465,8 +1713,20 @@ final class AVPVH_AT_Plugin {
 				if ( 'core/navigation-submenu' !== ( $level[ $index ]['blockName'] ?? '' ) ) {
 					return false;
 				}
-				$level[ $index ]['innerBlocks'][]  = $link;
-				$level[ $index ]['innerContent'][] = null;
+				$children = (array) ( $level[ $index ]['innerBlocks'] ?? array() );
+				foreach ( array_keys( $children ) as $child ) {
+					if ( self::is_page_link( $children[ $child ], $page_id ) ) {
+						$level[ $index ]['innerBlocks'][ $child ]['attrs'] = array_merge( (array) $children[ $child ]['attrs'], $link['attrs'] );
+						return true;
+					}
+				}
+				// Put the placeholder after the last child so it stays inside any wrapper markup.
+				$inner_content = (array) ( $level[ $index ]['innerContent'] ?? array() );
+				$last_child    = array_keys( $inner_content, null, true );
+				$insert_at     = $last_child ? end( $last_child ) + 1 : count( $inner_content );
+				array_splice( $inner_content, $insert_at, 0, array( null ) );
+				$level[ $index ]['innerBlocks'][] = $link;
+				$level[ $index ]['innerContent']  = $inner_content;
 				return true;
 			}
 			if ( ! isset( $level[ $index ]['innerBlocks'] ) || ! is_array( $level[ $index ]['innerBlocks'] ) ) {
@@ -1475,6 +1735,81 @@ final class AVPVH_AT_Plugin {
 			$level = &$level[ $index ]['innerBlocks'];
 		}
 		return false;
+	}
+
+	/**
+	 * Removes every link to a page except the one carrying the avpvhAtFresh
+	 * marker, and strips that marker. Keeps innerContent placeholders aligned.
+	 *
+	 * @param array $blocks  Parsed blocks.
+	 * @param int   $page_id Page ID.
+	 * @return array
+	 */
+	private static function prune_navigation_links( array $blocks, int $page_id ): array {
+		$result = array();
+		foreach ( $blocks as $block ) {
+			if ( self::is_page_link( $block, $page_id ) ) {
+				if ( empty( $block['attrs']['avpvhAtFresh'] ) ) {
+					continue;
+				}
+				unset( $block['attrs']['avpvhAtFresh'] );
+			}
+			if ( is_array( $block ) && ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$children      = array();
+				$inner_content = array();
+				$child_index   = 0;
+				foreach ( (array) ( $block['innerContent'] ?? array() ) as $chunk ) {
+					if ( null !== $chunk ) {
+						$inner_content[] = $chunk;
+						continue;
+					}
+					$child = $block['innerBlocks'][ $child_index ] ?? null;
+					++$child_index;
+					if ( null === $child ) {
+						continue;
+					}
+					$pruned = self::prune_navigation_links( array( $child ), $page_id );
+					if ( $pruned ) {
+						$children[]      = $pruned[0];
+						$inner_content[] = null;
+					}
+				}
+				$block['innerBlocks']  = $children;
+				$block['innerContent'] = $inner_content;
+			}
+			$result[] = $block;
+		}
+		return $result;
+	}
+
+	/**
+	 * Removes all links to a page from one block navigation.
+	 *
+	 * @param int $navigation_id wp_navigation post ID.
+	 * @param int $page_id       Page ID.
+	 * @return bool|WP_Error
+	 */
+	private static function remove_page_from_navigation( int $navigation_id, int $page_id ): bool|WP_Error {
+		$navigation = get_post( $navigation_id );
+		if ( ! $navigation || 'wp_navigation' !== $navigation->post_type ) {
+			return true;
+		}
+		$blocks   = parse_blocks( $navigation->post_content );
+		$original = serialize_blocks( $blocks );
+		$content  = serialize_blocks( self::prune_navigation_links( $blocks, $page_id ) );
+		if ( $content === $original ) {
+			return true;
+		}
+		$updated = wp_update_post(
+			wp_slash(
+				array(
+					'ID'           => $navigation_id,
+					'post_content' => $content,
+				)
+			),
+			true
+		);
+		return is_wp_error( $updated ) ? $updated : true;
 	}
 
 	/**
@@ -1490,6 +1825,34 @@ final class AVPVH_AT_Plugin {
 	}
 
 	/**
+	 * Gets one local job or a 404 error.
+	 *
+	 * @param int $id Local job ID.
+	 * @return object WP_Error when the job no longer exists.
+	 */
+	private static function require_row( int $id ): object {
+		$row = self::get_row( $id );
+		return null === $row ? self::missing_job() : $row;
+	}
+
+	/** Returns the error for a job that no longer exists. */
+	private static function missing_job(): WP_Error {
+		return new WP_Error( 'avpvh_at_job_missing', __( 'Transcriptie niet gevonden.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
+	}
+
+	/**
+	 * Cleans a secret without altering it: only surrounding whitespace and
+	 * control characters are removed (sanitize_text_field() would strip
+	 * percent-encoded sequences).
+	 *
+	 * @param mixed $value Raw value.
+	 * @return string
+	 */
+	private static function sanitize_secret( mixed $value ): string {
+		return trim( (string) preg_replace( '/[\x00-\x1F\x7F]/', '', is_scalar( $value ) ? (string) $value : '' ) );
+	}
+
+	/**
 	 * Presents a job without secret configuration.
 	 *
 	 * @param object $row              Local job row.
@@ -1498,18 +1861,19 @@ final class AVPVH_AT_Plugin {
 	 */
 	private static function present_job( object $row, bool $include_segments = true ): array {
 		return array(
-			'id'             => (int) $row->id,
-			'service_job_id' => $row->service_job_id,
-			'title'          => $row->title,
-			'audio_name'     => $row->audio_name,
-			'audio_url'      => $row->audio_url,
-			'status'         => $row->status,
-			'progress'       => (float) $row->progress,
-			'duration'       => null !== $row->duration ? (float) $row->duration : null,
-			'segments'       => $include_segments ? self::decode_segments( $row->segments ) : array(),
-			'summary'        => $row->summary,
-			'revision'       => (int) $row->revision,
-			'updated_at'     => $row->updated_at,
+			'id'              => (int) $row->id,
+			'service_job_id'  => $row->service_job_id,
+			'title'           => $row->title,
+			'audio_name'      => $row->audio_name,
+			'audio_url'       => $row->audio_url,
+			'status'          => $row->status,
+			'progress'        => (float) $row->progress,
+			'duration'        => null !== $row->duration ? (float) $row->duration : null,
+			'segments'        => $include_segments ? self::decode_segments( $row->segments ?? null ) : array(),
+			'summary'         => $row->summary ?? null,
+			'summary_pending' => $include_segments && (bool) get_transient( self::summary_pending_key( (int) $row->id ) ),
+			'revision'        => (int) $row->revision,
+			'updated_at'      => $row->updated_at,
 		);
 	}
 
@@ -1576,7 +1940,12 @@ final class AVPVH_AT_Plugin {
 			return $clean;
 		}
 		foreach ( $headers as $name => $value ) {
-			$clean[ sanitize_key( (string) $name ) ] = sanitize_text_field( (string) $value );
+			$name = (string) preg_replace( '/[^A-Za-z0-9!#$%&\'*+.^_`|~-]/', '', (string) $name );
+			if ( '' === $name || ! is_scalar( $value ) ) {
+				continue;
+			}
+			// Presigned values may contain percent-encoding; only strip control characters.
+			$clean[ $name ] = (string) preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $value );
 		}
 		return $clean;
 	}
