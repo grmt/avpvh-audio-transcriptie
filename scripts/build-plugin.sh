@@ -19,7 +19,7 @@ cp "${project_dir}/assets/frontend.css" "${plugin_dir}/assets/"
 cp "${project_dir}/assets/frontend.js" "${plugin_dir}/assets/"
 cp "${project_dir}/includes/class-avpvh-at-plugin.php" "${plugin_dir}/includes/"
 
-if [ -d "${project_dir}/languages" ]; then
+if [[ -d "${project_dir}/languages" ]]; then
 	find "${project_dir}/languages" -maxdepth 1 -type f \( -name '*.pot' -o -name '*.po' -o -name '*.mo' -o -name '*.json' -o -name '*.l10n.php' \) \
 		-exec cp {} "${plugin_dir}/languages/" \;
 fi

@@ -112,7 +112,7 @@
 		await flushSave();
 		if (hasPendingChanges() && !window.confirm('Niet alle wijzigingen zijn opgeslagen. Toch de editor verlaten?')) {
 			if (current && shouldPoll()) {
-				poll();
+				void poll();
 			}
 			return false;
 		}
@@ -1110,7 +1110,7 @@
 			} else {
 				current.summary_pending = true;
 				resultText.textContent = ' De samenvatting is gestart en verschijnt zodra deze klaar is.';
-				poll();
+				void poll();
 			}
 		} catch (error) {
 			resultText.textContent = ` ${error.message}`;
