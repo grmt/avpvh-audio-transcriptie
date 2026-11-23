@@ -44,6 +44,12 @@ composer check
 npm run check
 ```
 
+`composer check` runs the coding standards and the tests. The tests run on the WordPress test suite with WordPress core from Composer and a throwaway SQLite database, so they need no MySQL server, only PHP's `pdo_sqlite` extension. Without it, run them in Docker:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/app -w /app php:8.4-cli vendor/bin/phpunit
+```
+
 GitHub Actions additionally runs the official WordPress Plugin Check against the clean distribution directory. See [the service API contract](docs/service-api.md) to implement or connect a worker.
 
 ## WordPress.org readiness

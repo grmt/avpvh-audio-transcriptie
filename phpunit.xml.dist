@@ -1,26 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Unit tests for the plugin's self-contained helpers, run without WordPress:
-  tests/bootstrap.php stubs the few WordPress functions they call. Coverage
-  is measured over the plugin code only.
+  Tests on the WordPress test suite (vendor/wp-phpunit), with WordPress core
+  from Composer on a throwaway SQLite database: no MySQL server needed. See
+  tests/bootstrap.php. PHPUnit 9.6 is the newest the WordPress test suite
+  runs on. Coverage is measured over the plugin code only.
 -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="tests/bootstrap.php"
          colors="true"
-         cacheDirectory=".phpunit.cache"
+         cacheResultFile=".phpunit.cache/test-results"
+         convertDeprecationsToExceptions="true"
          failOnWarning="true"
-         failOnDeprecation="true"
          failOnRisky="true">
     <testsuites>
-        <testsuite name="unit">
-            <directory>tests</directory>
+        <testsuite name="plugin">
+            <directory suffix="Test.php">tests</directory>
         </testsuite>
     </testsuites>
-    <source>
+    <coverage>
         <include>
             <directory suffix=".php">includes</directory>
             <file>avpvh-audio-transcriptie.php</file>
         </include>
-    </source>
+    </coverage>
 </phpunit>

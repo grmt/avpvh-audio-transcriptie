@@ -13,10 +13,6 @@ use stdClass;
 
 final class HelpersTest extends TestCase {
 
-	protected function tearDown(): void {
-		$GLOBALS['avpvh_at_test_transients'] = array();
-	}
-
 	public function test_sanitize_secret_keeps_percent_encoding(): void {
 		$this->assertSame( 'ab%20cd%2F', self::call( 'sanitize_secret', " ab%20cd%2F\r\n" ) );
 		$this->assertSame( 'abc', self::call( 'sanitize_secret', "a\x00b\x7Fc" ) );
@@ -61,15 +57,31 @@ final class HelpersTest extends TestCase {
 		return array(
 			'nothing configured'   => array( $none, false, false ),
 			'AI Client available'  => array( $none, true, true ),
-			'direct API and model' => array( array( 'summary_api_url' => 'https://api.example/v1', 'summary_model' => 'm' ) + $none, false, true ),
+			'direct API and model' => array(
+				array(
+					'summary_api_url' => 'https://api.example/v1',
+					'summary_model'   => 'm',
+				) + $none,
+				false,
+				true,
+			),
 			'direct API, no model' => array( array( 'summary_api_url' => 'https://api.example/v1' ) + $none, false, false ),
-			'service with license' => array( array( 'service_url' => 'https://svc.example', 'license_key' => 'k' ) + $none, false, true ),
+			'service with license' => array(
+				array(
+					'service_url' => 'https://svc.example',
+					'license_key' => 'k',
+				) + $none,
+				false,
+				true,
+			),
 			'service, no license'  => array( array( 'service_url' => 'https://svc.example' ) + $none, false, false ),
 		);
 	}
 
-	/** @param array<string, string> $settings */
-	#[\PHPUnit\Framework\Attributes\DataProvider( 'summary_routes' )]
+	/**
+	 * @param array<string, string> $settings
+	 * @dataProvider summary_routes
+	 */
 	public function test_summary_configured( array $settings, bool $ai_client, bool $expected ): void {
 		$this->assertSame( $expected, self::call( 'summary_configured', $settings, $ai_client ) );
 	}
@@ -102,7 +114,7 @@ final class HelpersTest extends TestCase {
 	}
 
 	public function test_present_job_casts_types_and_reports_pending_summary(): void {
-		$GLOBALS['avpvh_at_test_transients']['avpvh_at_summary_pending_12'] = 1;
+		set_transient( 'avpvh_at_summary_pending_12', 1 );
 
 		$job = self::call( 'present_job', self::row() );
 
@@ -116,7 +128,7 @@ final class HelpersTest extends TestCase {
 	}
 
 	public function test_present_job_for_the_list_skips_segments(): void {
-		$GLOBALS['avpvh_at_test_transients']['avpvh_at_summary_pending_12'] = 1;
+		set_transient( 'avpvh_at_summary_pending_12', 1 );
 		$row           = self::row();
 		$row->duration = null;
 		unset( $row->segments, $row->summary );

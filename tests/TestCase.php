@@ -12,7 +12,7 @@ namespace AVPVH_AT\Tests;
 use AVPVH_AT_Plugin;
 use ReflectionMethod;
 
-abstract class TestCase extends \PHPUnit\Framework\TestCase {
+abstract class TestCase extends \WP_UnitTestCase {
 
 	/** Calls a private static method of the plugin class. */
 	protected static function call( string $method, mixed ...$args ): mixed {
