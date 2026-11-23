@@ -3,7 +3,7 @@ Contributors: grmt
 Tags: audio, transcription, speech-to-text, editor, accessibility
 Requires at least: 6.6
 Tested up to: 7.1
-Requires PHP: 8.1
+Requires PHP: 8.4
 Stable tag: 0.8.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -86,6 +86,8 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Hide publishing and summary controls from users without permission; allow repeated page updates and move or relabel existing block-navigation links.
 * Keep keyboard activation of buttons and links working; the Space shortcut only toggles audio outside controls.
 * Smaller job-list queries, no full editor re-render on insert or poll, a clean build directory, and JavaScript checks for both scripts.
+* Require PHP 8.4, the floor of the shared plugin CI and the servers.
+* Run CI through the shared grmt/wp-plugin-ci checks (PHPStan level 8, Plugin Check, prefix, naming) and release from the CI build.
 
 = 0.8.2 =
 
@@ -153,7 +155,7 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 
 = 0.8.3 =
 
-Fixes data-loss races in the editor, broken search filters, and WordPress AI Client summaries. Adds a database column, applied automatically.
+Fixes data-loss races in the editor, broken search filters, and WordPress AI Client summaries. Adds a database column, applied automatically. Requires PHP 8.4.
 
 = 0.8.2 =
 

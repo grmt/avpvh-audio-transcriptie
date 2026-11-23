@@ -18,7 +18,7 @@
 		<exclude-pattern>includes/class-avpvh-at-plugin.php</exclude-pattern>
 	</rule>
 	<rule ref="PHPCompatibilityWP">
-		<config name="testVersion" value="8.1-"/>
+		<config name="testVersion" value="8.4-"/>
 	</rule>
 	<config name="minimum_supported_wp_version" value="6.6"/>
 	<rule ref="WordPress.WP.I18n">

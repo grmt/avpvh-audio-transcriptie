@@ -9,6 +9,8 @@ defined( 'ABSPATH' ) || exit;
 
 /**
  * Coordinates storage, REST endpoints, the remote service and the admin editor.
+ *
+ * @phpstan-type Settings array{service_url: string, license_key: string, provider: string, default_model: string, default_language: string, default_prompt: string, default_glossary: string, chunk_minutes: int, summary_api_url: string, summary_api_key: string, summary_model: string, summary_procedure_prompt: string, summary_content_prompt: string}
  */
 final class AVPVH_AT_Plugin {
 
@@ -133,7 +135,7 @@ final class AVPVH_AT_Plugin {
 	 * everyone who can view the page. Page-level access restrictions remain in
 	 * control of WordPress and any access-control plugin used by the site.
 	 *
-	 * @param array|string $attributes Shortcode attributes.
+	 * @param array<string, mixed>|string $attributes Shortcode attributes.
 	 * @return string
 	 */
 	public static function render_shortcode( array|string $attributes ): string {
@@ -507,6 +509,7 @@ final class AVPVH_AT_Plugin {
 	 * chat-completions API (key optional), or the transcription service.
 	 *
 	 * @param array     $settings            Normalized settings.
+	 * @phpstan-param Settings $settings
 	 * @param bool|null $ai_client_available Precomputed AI Client availability.
 	 * @return bool
 	 */
@@ -517,7 +520,11 @@ final class AVPVH_AT_Plugin {
 			|| ( '' !== $settings['service_url'] && '' !== $settings['license_key'] );
 	}
 
-	/** Returns public settings without exposing the secret. */
+	/**
+	 * Returns public settings without exposing the secret.
+	 *
+	 * @return array<string, mixed>
+	 */
 	public static function get_settings(): array {
 		$settings = self::settings();
 		return array(
@@ -545,7 +552,7 @@ final class AVPVH_AT_Plugin {
 	 * Stores service configuration.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function update_settings( WP_REST_Request $request ): array|WP_Error {
 		$current                  = self::settings();
@@ -603,23 +610,33 @@ final class AVPVH_AT_Plugin {
 		return self::get_settings();
 	}
 
-	/** Validates the configured service key. */
+	/**
+	 * Validates the configured service key.
+	 *
+	 * @return array<string, mixed>|WP_Error
+	 */
 	public static function validate_license(): array|WP_Error {
 		return self::service_request( 'POST', '/v1/license/validate', array() );
 	}
 
-	/** Lists jobs visible to the current user. */
+	/**
+	 * Lists jobs visible to the current user.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
 	public static function list_jobs(): array {
 		global $wpdb;
 
 		$table = self::jobs_table();
-		$rows  = $wpdb->get_results( "SELECT id, service_job_id, title, audio_name, audio_url, status, progress, duration, revision, updated_at FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
+		$rows  = (array) $wpdb->get_results( "SELECT id, service_job_id, title, audio_name, audio_url, status, progress, duration, revision, updated_at FROM {$table} ORDER BY updated_at DESC LIMIT 100" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 
-		return array_map(
-			static function ( object $row ): array {
-				return self::present_job( $row, false );
-			},
-			$rows
+		return array_values(
+			array_map(
+				static function ( stdClass $row ): array {
+					return self::present_job( $row, false );
+				},
+				array_filter( $rows, static fn( $row ): bool => $row instanceof stdClass )
+			)
 		);
 	}
 
@@ -627,7 +644,7 @@ final class AVPVH_AT_Plugin {
 	 * Creates a remote and local transcription job.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function create_job( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -691,7 +708,7 @@ final class AVPVH_AT_Plugin {
 	 * Returns one job and refreshes its background state.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function get_job( WP_REST_Request $request ): array|WP_Error {
 		$row = self::refresh_job( self::get_row( absint( $request['id'] ) ) );
@@ -702,7 +719,7 @@ final class AVPVH_AT_Plugin {
 	 * Updates the human-readable transcript title.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function update_title( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -726,7 +743,7 @@ final class AVPVH_AT_Plugin {
 	 * Marks a browser-to-service upload as complete.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function upload_complete( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -756,7 +773,7 @@ final class AVPVH_AT_Plugin {
 	 * Saves corrected segments with optimistic locking.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function save_segments( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -854,10 +871,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Builds the 409 response for a stale revision.
 	 *
-	 * @param object $row Current job row.
+	 * @param stdClass $row Current job row.
 	 * @return WP_Error
 	 */
-	private static function revision_conflict( object $row ): WP_Error {
+	private static function revision_conflict( stdClass $row ): WP_Error {
 		return new WP_Error(
 			'avpvh_at_revision_conflict',
 			__( 'Er is een nieuwere versie. Herlaad de transcriptie om wijzigingen samen te voegen.', 'avpvh-audio-transcriptie' ),
@@ -872,7 +889,7 @@ final class AVPVH_AT_Plugin {
 	 * Returns revision metadata.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array
+	 * @return array<int, array<string, mixed>>
 	 */
 	public static function history( WP_REST_Request $request ): array {
 		global $wpdb;
@@ -888,7 +905,7 @@ final class AVPVH_AT_Plugin {
 	 * Returns menus and existing page information for the publish dialog.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array
+	 * @return array<string, mixed>
 	 */
 	public static function publishing_options( WP_REST_Request $request ): array {
 		$job_id                     = absint( $request->get_param( 'job_id' ) );
@@ -968,7 +985,7 @@ final class AVPVH_AT_Plugin {
 	 * Creates or updates a WordPress page and optionally places it in a menu.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function publish_page( WP_REST_Request $request ): array|WP_Error {
 		$job_id = absint( $request['id'] );
@@ -1128,7 +1145,7 @@ final class AVPVH_AT_Plugin {
 	 * Restores a prior revision and records the current one first.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function restore_revision( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -1141,7 +1158,7 @@ final class AVPVH_AT_Plugin {
 			$wpdb->prepare( "SELECT * FROM {$table} WHERE job_id = %d AND revision = %d ORDER BY id DESC LIMIT 1", $job->id, absint( $request['revision'] ) ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
 		);
 
-		if ( null === $old ) {
+		if ( ! $old instanceof stdClass ) {
 			return new WP_Error( 'avpvh_at_revision_missing', __( 'Versie niet gevonden.', 'avpvh-audio-transcriptie' ), array( 'status' => 404 ) );
 		}
 
@@ -1180,7 +1197,7 @@ final class AVPVH_AT_Plugin {
 	 * Requests an optional summary from the configured service.
 	 *
 	 * @param WP_REST_Request $request Request object.
-	 * @return array|WP_Error
+	 * @return array<string, mixed>|WP_Error
 	 */
 	public static function create_summary( WP_REST_Request $request ): array|WP_Error {
 		global $wpdb;
@@ -1251,10 +1268,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Uses WordPress Core's provider-agnostic AI Client for a summary.
 	 *
-	 * @param string $procedure_prompt Procedural instruction.
-	 * @param string $content_prompt   Content-specific instruction.
-	 * @param array  $segments         Corrected transcript segments.
-	 * @return array|WP_Error
+	 * @param string                           $procedure_prompt Procedural instruction.
+	 * @param string                           $content_prompt   Content-specific instruction.
+	 * @param array<int, array<string, mixed>> $segments         Corrected transcript segments.
+	 * @return array<string, mixed>|WP_Error
 	 */
 	private static function ai_client_summary_request( string $procedure_prompt, string $content_prompt, array $segments ): array|WP_Error {
 		$lines = array();
@@ -1285,11 +1302,12 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Calls an OpenAI-compatible chat-completions endpoint for a summary.
 	 *
-	 * @param array  $settings Settings.
-	 * @param string $procedure_prompt Procedural instruction.
-	 * @param string $content_prompt   Content-specific instruction.
-	 * @param array  $segments         Corrected transcript segments.
-	 * @return array|WP_Error
+	 * @param array                            $settings Settings.
+	 * @phpstan-param Settings $settings
+	 * @param string                           $procedure_prompt Procedural instruction.
+	 * @param string                           $content_prompt   Content-specific instruction.
+	 * @param array<int, array<string, mixed>> $segments         Corrected transcript segments.
+	 * @return array<string, mixed>|WP_Error
 	 */
 	private static function summary_request( array $settings, string $procedure_prompt, string $content_prompt, array $segments ): array|WP_Error {
 		if ( '' === $settings['summary_model'] ) {
@@ -1306,26 +1324,30 @@ final class AVPVH_AT_Plugin {
 		if ( '' !== $settings['summary_api_key'] ) {
 			$headers['Authorization'] = 'Bearer ' . $settings['summary_api_key'];
 		}
+		$body = wp_json_encode(
+			array(
+				'model'    => $settings['summary_model'],
+				'messages' => array(
+					array(
+						'role'    => 'system',
+						'content' => $procedure_prompt ? $procedure_prompt : __( 'Werk uitsluitend op basis van de transcriptie en verzin geen feiten.', 'avpvh-audio-transcriptie' ),
+					),
+					array(
+						'role'    => 'user',
+						'content' => ( $content_prompt ? "Inhoudelijke toelichting:\n" . $content_prompt . "\n\n" : '' ) . "Transcriptie:\n" . implode( "\n", $lines ),
+					),
+				),
+			)
+		);
+		if ( false === $body ) {
+			return new WP_Error( 'avpvh_at_summary_encoding', __( 'De transcriptie kon niet naar JSON worden omgezet.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+		}
 		$response = wp_safe_remote_post(
 			$settings['summary_api_url'],
 			array(
 				'timeout' => 120,
 				'headers' => $headers,
-				'body'    => wp_json_encode(
-					array(
-						'model'    => $settings['summary_model'],
-						'messages' => array(
-							array(
-								'role'    => 'system',
-								'content' => $procedure_prompt ? $procedure_prompt : __( 'Werk uitsluitend op basis van de transcriptie en verzin geen feiten.', 'avpvh-audio-transcriptie' ),
-							),
-							array(
-								'role'    => 'user',
-								'content' => ( $content_prompt ? "Inhoudelijke toelichting:\n" . $content_prompt . "\n\n" : '' ) . "Transcriptie:\n" . implode( "\n", $lines ),
-							),
-						),
-					)
-				),
+				'body'    => $body,
 			)
 		);
 		if ( is_wp_error( $response ) ) {
@@ -1355,10 +1377,10 @@ final class AVPVH_AT_Plugin {
 	 * a row re-read after the request and is written only if no save bumped the
 	 * revision in the meantime; otherwise it is retried on the newer row.
 	 *
-	 * @param object|null $row Job row.
-	 * @return object Job row or WP_Error instance.
+	 * @param stdClass|null $row Job row.
+	 * @return stdClass|WP_Error
 	 */
-	private static function refresh_job( ?object $row ): object {
+	private static function refresh_job( ?stdClass $row ): stdClass|WP_Error {
 		if ( null === $row ) {
 			return self::missing_job();
 		}
@@ -1452,10 +1474,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Merges remote segments with locally corrected records.
 	 *
-	 * @param array $local_segments  Locally stored segments.
-	 * @param array $remote_segments Service-provided segments.
-	 * @param array $deleted_ids     IDs of segments an editor removed.
-	 * @return array
+	 * @param array<int, array<string, mixed>> $local_segments  Locally stored segments.
+	 * @param array<mixed>                     $remote_segments Service-provided segments.
+	 * @param array<mixed>                     $deleted_ids     IDs of segments an editor removed.
+	 * @return array<int, array<string, mixed>>
 	 */
 	private static function merge_segments( array $local_segments, array $remote_segments, array $deleted_ids = array() ): array {
 		$local = array();
@@ -1496,7 +1518,7 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Sorts segments by start time, keeping the existing order for ties.
 	 *
-	 * @param array $segments Segments, sorted in place.
+	 * @param array<int, array<string, mixed>> $segments Segments, sorted in place.
 	 * @return void
 	 */
 	private static function sort_segments( array &$segments ): void {
@@ -1514,8 +1536,8 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Sanitizes one service segment.
 	 *
-	 * @param array $segment Untrusted service segment.
-	 * @return array
+	 * @param array<string, mixed> $segment Untrusted service segment.
+	 * @return array<string, mixed>
 	 */
 	private static function sanitize_remote_segment( array $segment ): array {
 		return array(
@@ -1533,10 +1555,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Sends one authenticated request to the configured opt-in service.
 	 *
-	 * @param string     $method HTTP method.
-	 * @param string     $path   Endpoint path.
-	 * @param array|null $body   Optional JSON body.
-	 * @return array|WP_Error
+	 * @param string                    $method HTTP method.
+	 * @param string                    $path   Endpoint path.
+	 * @param array<string, mixed>|null $body   Optional JSON body.
+	 * @return array<string, mixed>|WP_Error
 	 */
 	private static function service_request( string $method, string $path, ?array $body = null ): array|WP_Error {
 		$settings = self::settings();
@@ -1554,7 +1576,11 @@ final class AVPVH_AT_Plugin {
 			),
 		);
 		if ( null !== $body ) {
-			$args['body'] = wp_json_encode( $body );
+			$encoded = wp_json_encode( $body );
+			if ( false === $encoded ) {
+				return new WP_Error( 'avpvh_at_request_encoding', __( 'De aanvraag kon niet naar JSON worden omgezet.', 'avpvh-audio-transcriptie' ), array( 'status' => 500 ) );
+			}
+			$args['body'] = $encoded;
 		}
 
 		$response = wp_safe_remote_request( $settings['service_url'] . $path, $args );
@@ -1573,7 +1599,12 @@ final class AVPVH_AT_Plugin {
 		return is_array( $data ) ? $data : array();
 	}
 
-	/** Returns normalized settings. */
+	/**
+	 * Returns normalized settings.
+	 *
+	 * @return array
+	 * @phpstan-return Settings
+	 */
 	private static function settings(): array {
 		$saved = get_option( 'avpvh_at_settings', array() );
 		return array(
@@ -1605,7 +1636,11 @@ final class AVPVH_AT_Plugin {
 		}
 	}
 
-	/** Returns transcription defaults safe to expose to editors. */
+	/**
+	 * Returns transcription defaults safe to expose to editors.
+	 *
+	 * @return array<string, int|string>
+	 */
 	private static function transcription_defaults(): array {
 		$settings = self::settings();
 		unset( $settings['service_url'], $settings['license_key'], $settings['summary_api_key'] );
@@ -1629,7 +1664,7 @@ final class AVPVH_AT_Plugin {
 				'posts_per_page' => 1,
 				'fields'         => 'ids',
 				'meta_key'       => '_avpvh_at_job_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- A single administrative lookup for one managed page.
-				'meta_value'     => $job_id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value -- A single administrative lookup for one managed page.
+				'meta_value'     => (string) $job_id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value -- A single administrative lookup for one managed page.
 			)
 		);
 		return $pages ? (int) $pages[0] : 0;
@@ -1638,10 +1673,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Lists navigation submenus that can receive the transcript page.
 	 *
-	 * @param array  $blocks Parsed navigation blocks.
-	 * @param string $prefix Parent index path.
-	 * @param int    $depth  Navigation depth.
-	 * @return array
+	 * @param array<int|string, array<string, mixed>> $blocks Parsed navigation blocks.
+	 * @param string                                  $prefix Parent index path.
+	 * @param int                                     $depth  Navigation depth.
+	 * @return array<int, array<string, mixed>>
 	 */
 	private static function navigation_submenu_options( array $blocks, string $prefix = '', int $depth = 0 ): array {
 		$options = array();
@@ -1682,10 +1717,10 @@ final class AVPVH_AT_Plugin {
 	 * duplicated. The placed link carries the avpvhAtFresh marker, which
 	 * prune_navigation_links() removes.
 	 *
-	 * @param array  $blocks  Parsed navigation blocks, updated in place.
-	 * @param string $path    Dot-separated block index path, or empty for root.
-	 * @param array  $link    Parsed navigation-link block with the marker set.
-	 * @param int    $page_id Page ID.
+	 * @param array<int|string, mixed> $blocks  Parsed navigation blocks, updated in place.
+	 * @param string                   $path    Dot-separated block index path, or empty for root.
+	 * @param array<string, mixed>     $link    Parsed navigation-link block with the marker set.
+	 * @param int                      $page_id Page ID.
 	 * @return bool
 	 */
 	private static function place_navigation_link( array &$blocks, string $path, array $link, int $page_id ): bool {
@@ -1741,9 +1776,9 @@ final class AVPVH_AT_Plugin {
 	 * Removes every link to a page except the one carrying the avpvhAtFresh
 	 * marker, and strips that marker. Keeps innerContent placeholders aligned.
 	 *
-	 * @param array $blocks  Parsed blocks.
-	 * @param int   $page_id Page ID.
-	 * @return array
+	 * @param array<int|string, mixed> $blocks  Parsed blocks.
+	 * @param int                      $page_id Page ID.
+	 * @return array<int, mixed>
 	 */
 	private static function prune_navigation_links( array $blocks, int $page_id ): array {
 		$result = array();
@@ -1816,21 +1851,22 @@ final class AVPVH_AT_Plugin {
 	 * Gets one local job.
 	 *
 	 * @param int $id Local job ID.
-	 * @return object|null
+	 * @return stdClass|null
 	 */
-	private static function get_row( int $id ): ?object {
+	private static function get_row( int $id ): ?stdClass {
 		global $wpdb;
 		$table = self::jobs_table();
-		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
+		$row   = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is generated internally.
+		return $row instanceof stdClass ? $row : null;
 	}
 
 	/**
 	 * Gets one local job or a 404 error.
 	 *
 	 * @param int $id Local job ID.
-	 * @return object WP_Error when the job no longer exists.
+	 * @return stdClass|WP_Error
 	 */
-	private static function require_row( int $id ): object {
+	private static function require_row( int $id ): stdClass|WP_Error {
 		$row = self::get_row( $id );
 		return null === $row ? self::missing_job() : $row;
 	}
@@ -1855,11 +1891,11 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Presents a job without secret configuration.
 	 *
-	 * @param object $row              Local job row.
-	 * @param bool   $include_segments Whether transcript segments are needed.
-	 * @return array
+	 * @param stdClass $row              Local job row.
+	 * @param bool     $include_segments Whether transcript segments are needed.
+	 * @return array<string, mixed>
 	 */
-	private static function present_job( object $row, bool $include_segments = true ): array {
+	private static function present_job( stdClass $row, bool $include_segments = true ): array {
 		return array(
 			'id'              => (int) $row->id,
 			'service_job_id'  => $row->service_job_id,
@@ -1880,10 +1916,10 @@ final class AVPVH_AT_Plugin {
 	/**
 	 * Stores the current job as a revision.
 	 *
-	 * @param object $row Current job row.
+	 * @param stdClass $row Current job row.
 	 * @return void
 	 */
-	private static function store_revision( object $row ): void {
+	private static function store_revision( stdClass $row ): void {
 		global $wpdb;
 		$wpdb->insert(
 			self::revisions_table(),
@@ -1921,7 +1957,7 @@ final class AVPVH_AT_Plugin {
 	 * Safely decodes stored segment JSON.
 	 *
 	 * @param string|null $json Stored JSON.
-	 * @return array
+	 * @return array<mixed>
 	 */
 	private static function decode_segments( ?string $json ): array {
 		$segments = json_decode( $json ? $json : '[]', true );
@@ -1932,7 +1968,7 @@ final class AVPVH_AT_Plugin {
 	 * Sanitizes browser upload headers supplied by the service.
 	 *
 	 * @param mixed $headers Untrusted header map.
-	 * @return array
+	 * @return array<string, string>
 	 */
 	private static function sanitize_headers( mixed $headers ): array {
 		$clean = array();

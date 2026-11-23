@@ -1,0 +1,102 @@
+name: "CI"
+on:
+  # Branches are tested through their pull request (the merge result);
+  # main once more after each merge.
+  push:
+    branches: [main]
+  pull_request:
+  # The release workflow runs CI and publishes its build.
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  php-version: 8.4
+  node-version: 24.16.0
+  cache-version: 1
+
+jobs:
+  build:
+    name: "Build"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Build clean plugin package"
+        run: npm run build:plugin
+
+      # The plugin files at the artifact root, as the shared checks expect.
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: "build-artifact"
+          path: dist/avpvh-audio-transcriptie
+
+  # Shared with the other own plugins: PHP floor, global prefix, naming style,
+  # dependencies on the floor, syntax on the floor and newest PHP,
+  # PHPCompatibility, PHPStan, the WordPress.org Plugin Check and the repo
+  # conventions (Dependabot).
+  plugin-checks:
+    name: "Shared"
+    needs: build
+    uses: grmt/wp-plugin-ci/.github/workflows/plugin-checks.yml@main
+    with:
+      slug: avpvh-audio-transcriptie
+      artifact: build-artifact
+      prefixes: |
+        avpvh_at
+      ignore-codes: |
+        missing_composer_json_file
+
+  # SonarQube Cloud through the shared workflow; skipped with a notice until
+  # the repo has a SONAR_TOKEN secret. No PHPUnit tests yet.
+  quality:
+    name: "Quality"
+    uses: grmt/wp-plugin-ci/.github/workflows/quality.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      phpunit: false
+
+  # The checks below are this plugin's own.
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Setup PHP"
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ env.php-version }}
+          coverage: none
+          tools: composer:v2, cs2pr
+
+      - name: "Cache Composer dependencies"
+        uses: actions/cache@v6
+        with:
+          path: "~/.composer/cache"
+          key: composer-dependencies-${{ runner.os }}-${{ env.cache-version }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-dependencies-${{ runner.os }}-${{ env.cache-version }}-
+
+      - name: "Install Composer dependencies"
+        run: composer install -n --prefer-dist --no-progress
+
+      - name: "Validate Composer metadata"
+        run: composer validate --strict
+
+      - name: "WordPress Coding Standards"
+        run: vendor/bin/phpcs -q --standard=phpcs.xml.dist --report=checkstyle | cs2pr --graceful-warnings
+
+      - name: "Setup Node.js"
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.node-version }}
+
+      - name: "Check JavaScript syntax"
+        run: npm run check
