@@ -50,8 +50,8 @@ jobs:
       ignore-codes: |
         missing_composer_json_file
 
-  # SonarQube Cloud through the shared workflow; skipped with a notice until
-  # the repo has a SONAR_TOKEN secret. No PHPUnit tests yet.
+  # PHPUnit (tests/, without WordPress) on the floor and newest PHP, with
+  # coverage for SonarQube Cloud, through the shared workflow.
   quality:
     name: "Quality"
     uses: grmt/wp-plugin-ci/.github/workflows/quality.yml@main
@@ -59,8 +59,6 @@ jobs:
       contents: read
       id-token: write
     secrets: inherit
-    with:
-      phpunit: false
 
   # The checks below are this plugin's own.
   lint:

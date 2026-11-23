@@ -23,3 +23,5 @@
 *revision-backup*
 credentials*
 secrets*
+/.phpunit.cache/
+/coverage.xml

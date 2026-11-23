@@ -1505,8 +1505,8 @@ final class AVPVH_AT_Plugin {
 			unset( $local[ $id ] );
 		}
 
-		foreach ( $local as $segment ) {
-			if ( ! empty( $segment['manual'] ) && ! empty( $segment['inserted'] ) ) {
+		foreach ( $local as $id => $segment ) {
+			if ( ! isset( $removed[ $id ] ) && ! empty( $segment['manual'] ) && ! empty( $segment['inserted'] ) ) {
 				$merged[] = self::sanitize_remote_segment( $segment );
 			}
 		}

@@ -5,6 +5,7 @@
 /dist/
 /docs/
 /scripts/
+/tests/
 /vendor/
 /.distignore
 /.editorconfig
@@ -14,6 +15,8 @@
 /composer.lock
 /package.json
 /phpcs.xml.dist
+/phpunit.xml.dist
+/.phpunit.cache/
 /README.md
 /SECURITY.md
 *.log
