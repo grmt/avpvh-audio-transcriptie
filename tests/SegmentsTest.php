@@ -18,10 +18,24 @@ final class SegmentsTest extends TestCase {
 
 	public function test_merge_keeps_manual_edits_over_remote_text(): void {
 		$local  = array(
-			array( 'id' => 'a', 'start' => 0, 'text' => 'Gecorrigeerd', 'speaker' => 'Voorzitter', 'party' => 'Bestuur', 'manual' => true ),
+			array(
+				'id'      => 'a',
+				'start'   => 0,
+				'text'    => 'Gecorrigeerd',
+				'speaker' => 'Voorzitter',
+				'party'   => 'Bestuur',
+				'manual'  => true,
+			),
 		);
 		$remote = array(
-			array( 'id' => 'a', 'start' => 0, 'end' => 2, 'text' => 'Ruw', 'speaker' => 'S1', 'party' => '' ),
+			array(
+				'id'      => 'a',
+				'start'   => 0,
+				'end'     => 2,
+				'text'    => 'Ruw',
+				'speaker' => 'S1',
+				'party'   => '',
+			),
 		);
 
 		$merged = self::call( 'merge_segments', $local, $remote );
@@ -35,18 +49,50 @@ final class SegmentsTest extends TestCase {
 	}
 
 	public function test_merge_takes_remote_text_for_unedited_segments(): void {
-		$local  = array( array( 'id' => 'a', 'start' => 0, 'text' => 'Oud', 'manual' => false ) );
-		$remote = array( array( 'id' => 'a', 'start' => 0, 'text' => 'Nieuw' ) );
+		$local  = array(
+			array(
+				'id'     => 'a',
+				'start'  => 0,
+				'text'   => 'Oud',
+				'manual' => false,
+			),
+		);
+		$remote = array(
+			array(
+				'id'    => 'a',
+				'start' => 0,
+				'text'  => 'Nieuw',
+			),
+		);
 
 		$this->assertSame( 'Nieuw', self::call( 'merge_segments', $local, $remote )[0]['text'] );
 	}
 
 	public function test_merge_drops_deleted_segments_even_when_the_service_returns_them(): void {
-		$local  = array( array( 'id' => 'b', 'start' => 1, 'text' => 'B', 'manual' => true ) );
+		$local  = array(
+			array(
+				'id'     => 'b',
+				'start'  => 1,
+				'text'   => 'B',
+				'manual' => true,
+			),
+		);
 		$remote = array(
-			array( 'id' => 'a', 'start' => 0, 'text' => 'A' ),
-			array( 'id' => 'b', 'start' => 1, 'text' => 'B' ),
-			array( 'id' => 7, 'start' => 2, 'text' => 'Zeven' ),
+			array(
+				'id'    => 'a',
+				'start' => 0,
+				'text'  => 'A',
+			),
+			array(
+				'id'    => 'b',
+				'start' => 1,
+				'text'  => 'B',
+			),
+			array(
+				'id'    => 7,
+				'start' => 2,
+				'text'  => 'Zeven',
+			),
 		);
 
 		$merged = self::call( 'merge_segments', $local, $remote, array( 'b', 7 ) );
@@ -56,13 +102,36 @@ final class SegmentsTest extends TestCase {
 
 	public function test_merge_keeps_inserted_manual_segments_in_time_order(): void {
 		$local  = array(
-			array( 'id' => 'x', 'start' => 1.5, 'text' => 'Ingevoegd', 'manual' => true, 'inserted' => true ),
-			array( 'id' => 'gone', 'start' => 3, 'text' => 'Niet meer bij de dienst', 'manual' => true ),
-			array( 'id' => 'auto', 'start' => 4, 'text' => 'Ongewijzigd' ),
+			array(
+				'id'       => 'x',
+				'start'    => 1.5,
+				'text'     => 'Ingevoegd',
+				'manual'   => true,
+				'inserted' => true,
+			),
+			array(
+				'id'     => 'gone',
+				'start'  => 3,
+				'text'   => 'Niet meer bij de dienst',
+				'manual' => true,
+			),
+			array(
+				'id'    => 'auto',
+				'start' => 4,
+				'text'  => 'Ongewijzigd',
+			),
 		);
 		$remote = array(
-			array( 'id' => 'a', 'start' => 0, 'text' => 'A' ),
-			array( 'id' => 'b', 'start' => 2, 'text' => 'B' ),
+			array(
+				'id'    => 'a',
+				'start' => 0,
+				'text'  => 'A',
+			),
+			array(
+				'id'    => 'b',
+				'start' => 2,
+				'text'  => 'B',
+			),
 			'not a segment',
 		);
 
@@ -73,17 +142,36 @@ final class SegmentsTest extends TestCase {
 	}
 
 	public function test_merge_drops_deleted_inserted_segments(): void {
-		$local = array( array( 'id' => 'x', 'start' => 1, 'manual' => true, 'inserted' => true ) );
+		$local = array(
+			array(
+				'id'       => 'x',
+				'start'    => 1,
+				'manual'   => true,
+				'inserted' => true,
+			),
+		);
 
 		$this->assertSame( array(), self::call( 'merge_segments', $local, array(), array( 'x' ) ) );
 	}
 
 	public function test_sort_is_stable_for_equal_start_times(): void {
 		$segments = array(
-			array( 'id' => '1', 'start' => 5 ),
-			array( 'id' => '2', 'start' => 1 ),
-			array( 'id' => '3', 'start' => '5.0' ),
-			array( 'id' => '4', 'start' => 1 ),
+			array(
+				'id'    => '1',
+				'start' => 5,
+			),
+			array(
+				'id'    => '2',
+				'start' => 1,
+			),
+			array(
+				'id'    => '3',
+				'start' => '5.0',
+			),
+			array(
+				'id'    => '4',
+				'start' => 1,
+			),
 		);
 		self::call_with( 'sort_segments', array( &$segments ) );
 

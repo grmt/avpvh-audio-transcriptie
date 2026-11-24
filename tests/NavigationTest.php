@@ -64,7 +64,16 @@ final class NavigationTest extends TestCase {
 
 	public function test_is_page_link_matches_only_links_to_the_page(): void {
 		$this->assertTrue( self::call( 'is_page_link', self::link( 7 ), 7 ) );
-		$this->assertTrue( self::call( 'is_page_link', array( 'blockName' => 'core/navigation-link', 'attrs' => array( 'id' => '7' ) ), 7 ) );
+		$this->assertTrue(
+			self::call(
+				'is_page_link',
+				array(
+					'blockName' => 'core/navigation-link',
+					'attrs'     => array( 'id' => '7' ),
+				),
+				7
+			)
+		);
 		$this->assertFalse( self::call( 'is_page_link', self::link( 8 ), 7 ) );
 		$this->assertFalse( self::call( 'is_page_link', self::submenu( 'Sub', array() ), 0 ) );
 		$this->assertFalse( self::call( 'is_page_link', array( 'blockName' => 'core/navigation-link' ), 7 ) );
@@ -141,7 +150,9 @@ final class NavigationTest extends TestCase {
 		);
 	}
 
-	#[\PHPUnit\Framework\Attributes\DataProvider( 'invalid_paths' )]
+	/**
+	 * @dataProvider invalid_paths
+	 */
 	public function test_rejects_paths_that_do_not_lead_to_a_submenu( string $path ): void {
 		$blocks   = array( self::link( 1 ), self::submenu( 'Sub', array( self::link( 2 ) ) ) );
 		$original = $blocks;
@@ -178,14 +189,32 @@ final class NavigationTest extends TestCase {
 		$blocks = array(
 			self::link( 1 ),
 			self::submenu( '<em>Buiten</em>', array( self::link( 2 ), self::submenu( 'Binnen', array() ) ) ),
-			array( 'blockName' => 'core/navigation-submenu', 'attrs' => array() ),
+			array(
+				'blockName' => 'core/navigation-submenu',
+				'attrs'     => array(),
+			),
 		);
 
 		$this->assertSame(
 			array(
-				array( 'id' => '1', 'value' => 'block:1', 'title' => 'Buiten', 'parent' => 0 ),
-				array( 'id' => '1.1', 'value' => 'block:1.1', 'title' => '— Binnen', 'parent' => 0 ),
-				array( 'id' => '2', 'value' => 'block:2', 'title' => 'Naamloos submenu', 'parent' => 0 ),
+				array(
+					'id'     => '1',
+					'value'  => 'block:1',
+					'title'  => 'Buiten',
+					'parent' => 0,
+				),
+				array(
+					'id'     => '1.1',
+					'value'  => 'block:1.1',
+					'title'  => '— Binnen',
+					'parent' => 0,
+				),
+				array(
+					'id'     => '2',
+					'value'  => 'block:2',
+					'title'  => 'Naamloos submenu',
+					'parent' => 0,
+				),
 			),
 			self::call( 'navigation_submenu_options', $blocks )
 		);
