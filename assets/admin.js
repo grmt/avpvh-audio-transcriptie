@@ -746,10 +746,14 @@
 				visibleRows.push(row);
 			}
 		});
-		app.querySelector('#avpvh-at-count').textContent = query ? (visibleRows.length
+		let count = '';
+		if (query && visibleRows.length) {
 			/* translators: %d: number of matching segments. */
-			? sprintf(_n('%d resultaat', '%d resultaten', visibleRows.length, 'avpvh-audio-transcriptie'), visibleRows.length)
-			: __('Geen resultaten', 'avpvh-audio-transcriptie')) : '';
+			count = sprintf(_n('%d resultaat', '%d resultaten', visibleRows.length, 'avpvh-audio-transcriptie'), visibleRows.length);
+		} else if (query) {
+			count = __('Geen resultaten', 'avpvh-audio-transcriptie');
+		}
+		app.querySelector('#avpvh-at-count').textContent = count;
 		if (query && moveToFirst) {
 			setFocus(visibleRows[0]?.dataset.id || null, true);
 		}

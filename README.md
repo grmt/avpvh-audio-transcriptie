@@ -50,6 +50,12 @@ npm run check
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/app -w /app php:8.4-cli vendor/bin/phpunit
 ```
 
+After changing translatable text in PHP or JavaScript, regenerate the translation template `languages/avpvh-audio-transcriptie.pot`. WP-CLI comes with the Composer dev dependencies and only scans the source files, so no WordPress install is needed:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/app -w /app composer:2 composer make-pot
+```
+
 GitHub Actions additionally runs the official WordPress Plugin Check against the clean distribution directory. See [the service API contract](docs/service-api.md) to implement or connect a worker.
 
 ## WordPress.org readiness
