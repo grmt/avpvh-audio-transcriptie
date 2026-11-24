@@ -1,7 +1,8 @@
-/* global avpvhAudioTranscriptie */
+/* global avpvhAudioTranscriptie, wp */
 (() => {
 	'use strict';
 
+	const { __, _n, sprintf } = wp.i18n;
 	const config = avpvhAudioTranscriptie;
 	const defaults = config.defaults || {};
 	const app = document.querySelector('#avpvh-at-app');
@@ -28,6 +29,24 @@
 		(character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]
 	);
 
+	// Job statuses from the service API; unknown values are shown as-is.
+	const statusLabels = {
+		created: __('Aangemaakt', 'avpvh-audio-transcriptie'),
+		uploading: __('Uploaden', 'avpvh-audio-transcriptie'),
+		queued: __('In de wachtrij', 'avpvh-audio-transcriptie'),
+		converting: __('Converteren', 'avpvh-audio-transcriptie'),
+		transcribing: __('Transcriberen', 'avpvh-audio-transcriptie'),
+		complete: __('Klaar', 'avpvh-audio-transcriptie'),
+		failed: __('Mislukt', 'avpvh-audio-transcriptie')
+	};
+	const statusLabel = (status) => statusLabels[status] || String(status ?? '');
+
+	function segmentCount() {
+		const count = current.segments.length;
+		/* translators: %d: number of transcript segments. */
+		return sprintf(_n('%d fragment', '%d fragmenten', count, 'avpvh-audio-transcriptie'), count);
+	}
+
 	async function api(path, options = {}) {
 		const response = await fetch(config.root + path, {
 			...options,
@@ -46,7 +65,11 @@
 			parsed = false;
 		}
 		if (!response.ok || !parsed) {
-			const error = new Error(data?.message || `${config.i18n.requestFailed} (HTTP ${response.status})`);
+			const error = new Error(data?.message || sprintf(
+				/* translators: %d: HTTP status code. */
+				__('De aanvraag is mislukt (HTTP %d).', 'avpvh-audio-transcriptie'),
+				response.status
+			));
 			error.status = response.ok ? 0 : response.status;
 			error.data = data;
 			throw error;
@@ -56,9 +79,9 @@
 
 	function renderShell() {
 		app.innerHTML = `
-			<nav class="avpvh-at-tabs" aria-label="Pluginonderdelen">
-				<button type="button" data-tab="jobs" class="active">Transcripties</button>
-				${config.canManage ? '<button type="button" data-tab="settings">Instellingen</button>' : ''}
+			<nav class="avpvh-at-tabs" aria-label="${escapeHtml(__('Pluginonderdelen', 'avpvh-audio-transcriptie'))}">
+				<button type="button" data-tab="jobs" class="active">${escapeHtml(__('Transcripties', 'avpvh-audio-transcriptie'))}</button>
+				${config.canManage ? `<button type="button" data-tab="settings">${escapeHtml(__('Instellingen', 'avpvh-audio-transcriptie'))}</button>` : ''}
 			</nav>
 			<div id="avpvh-at-notice" class="notice inline" hidden><p></p></div>
 			<section id="avpvh-at-view"></section>`;
@@ -110,7 +133,7 @@
 		}
 		clearTimeout(pollTimer);
 		await flushSave();
-		if (hasPendingChanges() && !window.confirm('Niet alle wijzigingen zijn opgeslagen. Toch de editor verlaten?')) {
+		if (hasPendingChanges() && !window.confirm(__('Niet alle wijzigingen zijn opgeslagen. Toch de editor verlaten?', 'avpvh-audio-transcriptie'))) {
 			if (current && shouldPoll()) {
 				void poll();
 			}
@@ -131,7 +154,7 @@
 	async function renderJobList() {
 		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
-		view.innerHTML = '<p class="avpvh-at-loading">Transcripties laden<span></span></p>';
+		view.innerHTML = `<p class="avpvh-at-loading">${escapeHtml(__('Transcripties laden', 'avpvh-audio-transcriptie'))}<span></span></p>`;
 		try {
 			const jobs = await api('jobs');
 			if (generation !== viewGeneration) {
@@ -139,26 +162,26 @@
 			}
 			view.innerHTML = `
 				<section class="avpvh-at-card">
-					<h2>Transcripties</h2>
+					<h2>${escapeHtml(__('Transcripties', 'avpvh-audio-transcriptie'))}</h2>
 					<div class="avpvh-at-jobs">
-						${jobs.map(jobRow).join('') || '<p>Nog geen transcripties.</p>'}
+						${jobs.map(jobRow).join('') || `<p>${escapeHtml(__('Nog geen transcripties.', 'avpvh-audio-transcriptie'))}</p>`}
 					</div>
 				</section>
 				${config.canEdit ? `<details class="avpvh-at-card avpvh-at-new-panel">
-					<summary><strong>Nieuwe transcriptie</strong></summary>
+					<summary><strong>${escapeHtml(__('Nieuwe transcriptie', 'avpvh-audio-transcriptie'))}</strong></summary>
 					<div class="avpvh-at-new">
-						<label>Titel <input id="avpvh-at-title" type="text"></label>
-						<label>Transcriptie-engine <input id="avpvh-at-provider" type="text" value="${escapeHtml(defaults.provider || 'faster-whisper')}" list="avpvh-at-providers"><datalist id="avpvh-at-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
-						<label>Model <input id="avpvh-at-model" type="text" value="${escapeHtml(defaults.default_model || 'medium')}" list="avpvh-at-models"><datalist id="avpvh-at-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
-						<label>Taal <input id="avpvh-at-language" type="text" value="${escapeHtml(defaults.default_language || 'nl')}" size="6"></label>
-						<label>Blokgrootte (minuten) <input id="avpvh-at-chunk" type="number" min="1" max="60" value="${escapeHtml(defaults.chunk_minutes || 10)}"></label>
-						<label>Audio <input id="avpvh-at-audio" type="file" accept="audio/*"></label>
-						<button id="avpvh-at-start" type="button" class="button button-primary">Start transcriptie</button>
+						<label>${escapeHtml(__('Titel', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-title" type="text"></label>
+						<label>${escapeHtml(__('Transcriptie-engine', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-provider" type="text" value="${escapeHtml(defaults.provider || 'faster-whisper')}" list="avpvh-at-providers"><datalist id="avpvh-at-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
+						<label>${escapeHtml(__('Model', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-model" type="text" value="${escapeHtml(defaults.default_model || 'medium')}" list="avpvh-at-models"><datalist id="avpvh-at-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
+						<label>${escapeHtml(__('Taal', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-language" type="text" value="${escapeHtml(defaults.default_language || 'nl')}" size="6"></label>
+						<label>${escapeHtml(__('Blokgrootte (minuten)', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-chunk" type="number" min="1" max="60" value="${escapeHtml(defaults.chunk_minutes || 10)}"></label>
+						<label>${escapeHtml(__('Audio', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-audio" type="file" accept="audio/*"></label>
+						<button id="avpvh-at-start" type="button" class="button button-primary">${escapeHtml(__('Start transcriptie', 'avpvh-audio-transcriptie'))}</button>
 					</div>
 					<details class="avpvh-at-transcription-options" open>
-						<summary>Prompt en glossary voor deze transcriptie</summary>
-						<label>Prompt <textarea id="avpvh-at-prompt" rows="5">${escapeHtml(defaults.default_prompt || '')}</textarea></label>
-						<label>Glossary <textarea id="avpvh-at-glossary" rows="5" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(defaults.default_glossary || '')}</textarea></label>
+						<summary>${escapeHtml(__('Prompt en glossary voor deze transcriptie', 'avpvh-audio-transcriptie'))}</summary>
+						<label>${escapeHtml(__('Prompt', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-prompt" rows="5">${escapeHtml(defaults.default_prompt || '')}</textarea></label>
+						<label>${escapeHtml(__('Glossary', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-glossary" rows="5" placeholder="${escapeHtml(__('Eén term per regel of komma-gescheiden', 'avpvh-audio-transcriptie'))}">${escapeHtml(defaults.default_glossary || '')}</textarea></label>
 					</details>
 					<progress id="avpvh-at-upload" max="100" value="0" hidden></progress>
 				</details>` : ''}`;
@@ -174,7 +197,7 @@
 	function jobRow(job) {
 		return `<button type="button" class="avpvh-at-job" data-id="${job.id}">
 			<strong>${escapeHtml(job.title)}</strong>
-			<span>Open transcriptie · ${escapeHtml(job.status)} · ${Math.round(job.progress)}%</span>
+			<span>${escapeHtml(__('Open transcriptie', 'avpvh-audio-transcriptie'))} · ${escapeHtml(statusLabel(job.status))} · ${Math.round(job.progress)}%</span>
 			<progress max="100" value="${job.progress}"></progress>
 		</button>`;
 	}
@@ -182,7 +205,7 @@
 	async function startJob() {
 		const file = app.querySelector('#avpvh-at-audio').files[0];
 		if (!file) {
-			notice('Kies eerst een audiobestand.', 'warning');
+			notice(__('Kies eerst een audiobestand.', 'avpvh-audio-transcriptie'), 'warning');
 			return;
 		}
 
@@ -231,10 +254,14 @@
 				if (request.status >= 200 && request.status < 300) {
 					resolve();
 				} else {
-					reject(new Error(`Upload mislukt (${request.status}).`));
+					reject(new Error(sprintf(
+						/* translators: %d: HTTP status code. */
+						__('Upload mislukt (HTTP %d).', 'avpvh-audio-transcriptie'),
+						request.status
+					)));
 				}
 			});
-			request.addEventListener('error', () => reject(new Error('De uploadverbinding is mislukt.')));
+			request.addEventListener('error', () => reject(new Error(__('De uploadverbinding is mislukt.', 'avpvh-audio-transcriptie'))));
 			request.send(file);
 		});
 	}
@@ -243,7 +270,7 @@
 		resetEditorState();
 		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
-		view.innerHTML = '<p class="avpvh-at-loading">Transcriptie laden<span></span></p>';
+		view.innerHTML = `<p class="avpvh-at-loading">${escapeHtml(__('Transcriptie laden', 'avpvh-audio-transcriptie'))}<span></span></p>`;
 		try {
 			const job = await api(`jobs/${id}`);
 			if (generation !== viewGeneration) {
@@ -267,21 +294,21 @@
 		const parties = uniqueValues(current.segments, 'party');
 		view.innerHTML = `
 			<header class="avpvh-at-editor-head">
-				<button id="avpvh-at-back" type="button" class="button">← Overzicht</button>
+				<button id="avpvh-at-back" type="button" class="button">← ${escapeHtml(__('Overzicht', 'avpvh-audio-transcriptie'))}</button>
 				<div class="avpvh-at-editor-main">
-					<h2>${config.canEdit ? `<button id="avpvh-at-rename" type="button" class="avpvh-at-title-button" title="Naam wijzigen">${escapeHtml(current.title)}</button>` : escapeHtml(current.title)}</h2>
-					<div><span id="avpvh-at-status">${escapeHtml(current.status)}</span> · <span id="avpvh-at-percent">${Math.round(current.progress)}%</span> <span id="avpvh-at-save-state" aria-live="polite"></span></div>
+					<h2>${config.canEdit ? `<button id="avpvh-at-rename" type="button" class="avpvh-at-title-button" title="${escapeHtml(__('Naam wijzigen', 'avpvh-audio-transcriptie'))}">${escapeHtml(current.title)}</button>` : escapeHtml(current.title)}</h2>
+					<div><span id="avpvh-at-status">${escapeHtml(statusLabel(current.status))}</span> · <span id="avpvh-at-percent">${Math.round(current.progress)}%</span> <span id="avpvh-at-save-state" aria-live="polite"></span></div>
 					<progress id="avpvh-at-progress" max="100" value="${current.progress}"></progress>
 					${playerHtml()}
 				</div>
 				<div class="avpvh-at-actions">
-					<details class="avpvh-at-action-menu"><summary class="button">Transcriptie</summary><div>
-						<button id="avpvh-at-storage" type="button" class="button">Bestanden &amp; opslag</button>
-						<button id="avpvh-at-history" type="button" class="button">Geschiedenis</button>
+					<details class="avpvh-at-action-menu"><summary class="button">${escapeHtml(__('Transcriptie', 'avpvh-audio-transcriptie'))}</summary><div>
+						<button id="avpvh-at-storage" type="button" class="button">${escapeHtml(__('Bestanden & opslag', 'avpvh-audio-transcriptie'))}</button>
+						<button id="avpvh-at-history" type="button" class="button">${escapeHtml(__('Geschiedenis', 'avpvh-audio-transcriptie'))}</button>
 					</div></details>
-					<details class="avpvh-at-action-menu"><summary class="button">Exporteren</summary><div>
-						<button id="avpvh-at-export-html" type="button" class="button">HTML-bestand</button>
-						<button id="avpvh-at-export-markdown" type="button" class="button">Markdown-tabel</button>
+					<details class="avpvh-at-action-menu"><summary class="button">${escapeHtml(__('Exporteren', 'avpvh-audio-transcriptie'))}</summary><div>
+						<button id="avpvh-at-export-html" type="button" class="button">${escapeHtml(__('HTML-bestand', 'avpvh-audio-transcriptie'))}</button>
+						<button id="avpvh-at-export-markdown" type="button" class="button">${escapeHtml(__('Markdown-tabel', 'avpvh-audio-transcriptie'))}</button>
 					</div></details>
 				</div>
 			</header>
@@ -291,16 +318,16 @@
 			<div id="avpvh-at-storage-panel" class="avpvh-at-card" hidden></div>
 			<div id="avpvh-at-history-panel" class="avpvh-at-card" hidden></div>
 			${config.canPublish ? `<details id="avpvh-at-publish-panel" class="avpvh-at-card avpvh-at-section">
-				<summary><strong>Transcriptiepagina maken</strong></summary>
-				<div class="avpvh-at-panel-body"><p>Open deze sectie om de shortcode te bekijken of een WordPress-pagina te maken.</p></div>
+				<summary><strong>${escapeHtml(__('Transcriptiepagina maken', 'avpvh-audio-transcriptie'))}</strong></summary>
+				<div class="avpvh-at-panel-body"><p>${escapeHtml(__('Open deze sectie om de shortcode te bekijken of een WordPress-pagina te maken.', 'avpvh-audio-transcriptie'))}</p></div>
 			</details>` : ''}
 			<details id="avpvh-at-summary-panel" class="avpvh-at-card avpvh-at-section" ${config.canEdit || current.summary ? '' : 'hidden'}>
-				<summary><strong>${config.canEdit ? 'Samenvatting maken' : 'Samenvatting'}</strong></summary>
-				<div class="avpvh-at-panel-body">${current.summary ? `<div class="avpvh-at-summary-result">${current.summary}</div>` : '<p class="avpvh-at-summary-placeholder">Open deze sectie om een samenvatting te laten maken.</p>'}</div>
+				<summary><strong>${escapeHtml(config.canEdit ? __('Samenvatting maken', 'avpvh-audio-transcriptie') : __('Samenvatting', 'avpvh-audio-transcriptie'))}</strong></summary>
+				<div class="avpvh-at-panel-body">${current.summary ? `<div class="avpvh-at-summary-result">${current.summary}</div>` : `<p class="avpvh-at-summary-placeholder">${escapeHtml(__('Open deze sectie om een samenvatting te laten maken.', 'avpvh-audio-transcriptie'))}</p>`}</div>
 			</details>
 			<details class="avpvh-at-card avpvh-at-section avpvh-at-transcript-section" open>
-				<summary><strong>Transcriptie</strong> <span id="avpvh-at-segment-count">${current.segments.length} fragmenten</span></summary>
-				<div class="avpvh-at-filter"><label>Zoeken <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
+				<summary><strong>${escapeHtml(__('Transcriptie', 'avpvh-audio-transcriptie'))}</strong> <span id="avpvh-at-segment-count">${escapeHtml(segmentCount())}</span></summary>
+				<div class="avpvh-at-filter"><label>${escapeHtml(__('Zoeken', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-search" type="search"></label><span id="avpvh-at-count"></span></div>
 				<div id="avpvh-at-segments">${current.segments.map(segmentRow).join('')}</div>
 			</details>`;
 
@@ -358,7 +385,7 @@
 		container.querySelectorAll('.avpvh-at-segment').forEach(bindSegmentRow);
 		app.querySelector('#avpvh-at-speakers').innerHTML = labelOptions('speaker');
 		app.querySelector('#avpvh-at-parties').innerHTML = labelOptions('party');
-		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
+		app.querySelector('#avpvh-at-segment-count').textContent = segmentCount();
 		applyFilter(false);
 		const keepFocus = current.segments.some((segment) => segment.id === focusedId) ? focusedId : current.segments[0]?.id || null;
 		setFocus(keepFocus, false);
@@ -388,7 +415,7 @@
 			body.prepend(box);
 		}
 		body.querySelector('.avpvh-at-summary-placeholder')?.remove();
-		box.innerHTML = `<h3>Samenvatting</h3>${current.summary}`;
+		box.innerHTML = `<h3>${escapeHtml(__('Samenvatting', 'avpvh-audio-transcriptie'))}</h3>${current.summary}`;
 	}
 
 	function uniqueValues(segments, field) {
@@ -410,16 +437,16 @@
 			return;
 		}
 		revealPanel(panel);
-		panel.innerHTML = `<h3>Naam wijzigen</h3>
-			<label>Naam transcriptie <input id="avpvh-at-new-title" type="text" value="${escapeHtml(current.title)}"></label>
-			<p class="description">Dit wijzigt de naam in WordPress en in nieuwe exports. Het oorspronkelijke audiobestand en eerder gemaakte TXT-, SRT- en audiofragmentbestanden worden niet hernoemd: die bestanden staan buiten de beheerde transcriptiedatabase.</p>
-			<button id="avpvh-at-save-title" type="button" class="button button-primary">Naam opslaan</button>
+		panel.innerHTML = `<h3>${escapeHtml(__('Naam wijzigen', 'avpvh-audio-transcriptie'))}</h3>
+			<label>${escapeHtml(__('Naam transcriptie', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-new-title" type="text" value="${escapeHtml(current.title)}"></label>
+			<p class="description">${escapeHtml(__('Dit wijzigt de naam in WordPress en in nieuwe exports. Het oorspronkelijke audiobestand en eerder gemaakte TXT-, SRT- en audiofragmentbestanden worden niet hernoemd: die bestanden staan buiten de beheerde transcriptiedatabase.', 'avpvh-audio-transcriptie'))}</p>
+			<button id="avpvh-at-save-title" type="button" class="button button-primary">${escapeHtml(__('Naam opslaan', 'avpvh-audio-transcriptie'))}</button>
 			<span id="avpvh-at-title-result" aria-live="polite"></span>`;
 		panel.querySelector('#avpvh-at-save-title').addEventListener('click', async () => {
 			const title = panel.querySelector('#avpvh-at-new-title').value.trim();
 			const result = panel.querySelector('#avpvh-at-title-result');
 			if (!title) {
-				result.textContent = ' Vul een naam in.';
+				result.textContent = ` ${__('Vul een naam in.', 'avpvh-audio-transcriptie')}`;
 				return;
 			}
 			try {
@@ -433,7 +460,7 @@
 				if (job === current) {
 					app.querySelector('.avpvh-at-title-button').textContent = job.title;
 				}
-				result.textContent = ' Naam opgeslagen.';
+				result.textContent = ` ${__('Naam opgeslagen.', 'avpvh-audio-transcriptie')}`;
 			} catch (error) {
 				result.textContent = ` ${error.message}`;
 			}
@@ -447,23 +474,28 @@
 			return;
 		}
 		revealPanel(panel);
-		panel.innerHTML = `<h3>Bestanden en opslag</h3>
+		panel.innerHTML = `<h3>${escapeHtml(__('Bestanden en opslag', 'avpvh-audio-transcriptie'))}</h3>
 			<dl class="avpvh-at-storage-list">
-				<dt>Audio</dt><dd>${current.audio_url ? `<a href="${escapeHtml(current.audio_url)}" target="_blank" rel="noopener">${escapeHtml(current.audio_name || current.audio_url)}</a>` : escapeHtml(current.audio_name || 'Geen audiolocatie beschikbaar')}</dd>
-				<dt>Transcriptie</dt><dd>WordPress-database, transcriptie ${current.id}; ${current.segments.length} fragmenten.</dd>
-				<dt>Correctiehistorie</dt><dd>WordPress-database; maximaal 50 bewaarde revisies.</dd>
-				<dt>HTML/Markdown-export</dt><dd>Wordt door de browser in de map Downloads geplaatst.</dd>
-				<dt>WordPress-pagina</dt><dd>Gebruik “Publiceer als pagina” om een live pagina te maken die altijd de actuele databaseversie toont.</dd>
+				<dt>${escapeHtml(__('Audio', 'avpvh-audio-transcriptie'))}</dt><dd>${current.audio_url ? `<a href="${escapeHtml(current.audio_url)}" target="_blank" rel="noopener">${escapeHtml(current.audio_name || current.audio_url)}</a>` : escapeHtml(current.audio_name || __('Geen audiolocatie beschikbaar', 'avpvh-audio-transcriptie'))}</dd>
+				<dt>${escapeHtml(__('Transcriptie', 'avpvh-audio-transcriptie'))}</dt><dd>${escapeHtml(sprintf(
+					/* translators: 1: transcription ID, 2: number of segments. */
+					_n('WordPress-database, transcriptie %1$d; %2$d fragment.', 'WordPress-database, transcriptie %1$d; %2$d fragmenten.', current.segments.length, 'avpvh-audio-transcriptie'),
+					current.id,
+					current.segments.length
+				))}</dd>
+				<dt>${escapeHtml(__('Correctiehistorie', 'avpvh-audio-transcriptie'))}</dt><dd>${escapeHtml(__('WordPress-database; maximaal 50 bewaarde revisies.', 'avpvh-audio-transcriptie'))}</dd>
+				<dt>${escapeHtml(__('HTML/Markdown-export', 'avpvh-audio-transcriptie'))}</dt><dd>${escapeHtml(__('Wordt door de browser in de map Downloads geplaatst.', 'avpvh-audio-transcriptie'))}</dd>
+				<dt>${escapeHtml(__('WordPress-pagina', 'avpvh-audio-transcriptie'))}</dt><dd>${escapeHtml(__('Gebruik “Transcriptiepagina maken” om een live pagina te maken die altijd de actuele databaseversie toont.', 'avpvh-audio-transcriptie'))}</dd>
 			</dl>`;
 	}
 
 	function segmentRow(segment) {
 		return `<article class="avpvh-at-segment" data-id="${escapeHtml(segment.id)}" tabindex="0">
-			<button type="button" class="avpvh-at-time" title="Speel vanaf dit fragment">${clock(segment.start)}</button>
-			<label><span>Partij</span><input class="avpvh-at-party" type="text" list="avpvh-at-parties" value="${escapeHtml(segment.party)}" ${config.canEdit ? '' : 'disabled'}></label>
-			<label><span>Spreker</span><input class="avpvh-at-speaker" type="text" list="avpvh-at-speakers" value="${escapeHtml(segment.speaker)}" ${config.canEdit ? '' : 'disabled'}></label>
-			<label class="avpvh-at-text"><span>Transcriptie</span><textarea ${config.canEdit ? '' : 'readonly'}>${escapeHtml(segment.text)}</textarea></label>
-			${config.canEdit ? '<div class="avpvh-at-row-actions"><button type="button" class="button avpvh-at-insert-row" title="Zin na dit fragment toevoegen" aria-label="Zin na dit fragment toevoegen">+</button><button type="button" class="button avpvh-at-delete-row" title="Deze zin verwijderen" aria-label="Deze zin verwijderen">−</button></div>' : ''}
+			<button type="button" class="avpvh-at-time" title="${escapeHtml(__('Speel vanaf dit fragment', 'avpvh-audio-transcriptie'))}">${clock(segment.start)}</button>
+			<label><span>${escapeHtml(__('Partij', 'avpvh-audio-transcriptie'))}</span><input class="avpvh-at-party" type="text" list="avpvh-at-parties" value="${escapeHtml(segment.party)}" ${config.canEdit ? '' : 'disabled'}></label>
+			<label><span>${escapeHtml(__('Spreker', 'avpvh-audio-transcriptie'))}</span><input class="avpvh-at-speaker" type="text" list="avpvh-at-speakers" value="${escapeHtml(segment.speaker)}" ${config.canEdit ? '' : 'disabled'}></label>
+			<label class="avpvh-at-text"><span>${escapeHtml(__('Transcriptie', 'avpvh-audio-transcriptie'))}</span><textarea ${config.canEdit ? '' : 'readonly'}>${escapeHtml(segment.text)}</textarea></label>
+			${config.canEdit ? `<div class="avpvh-at-row-actions"><button type="button" class="button avpvh-at-insert-row" title="${escapeHtml(__('Zin na dit fragment toevoegen', 'avpvh-audio-transcriptie'))}" aria-label="${escapeHtml(__('Zin na dit fragment toevoegen', 'avpvh-audio-transcriptie'))}">+</button><button type="button" class="button avpvh-at-delete-row" title="${escapeHtml(__('Deze zin verwijderen', 'avpvh-audio-transcriptie'))}" aria-label="${escapeHtml(__('Deze zin verwijderen', 'avpvh-audio-transcriptie'))}">−</button></div>` : ''}
 		</article>`;
 	}
 
@@ -502,13 +534,13 @@
 				setFocus(id, false);
 				if ('yes' !== deleteButton.dataset.confirm) {
 					deleteButton.dataset.confirm = 'yes';
-					deleteButton.textContent = 'Zeker?';
-					deleteButton.title = 'Klik nogmaals om deze zin te verwijderen';
+					deleteButton.textContent = __('Zeker?', 'avpvh-audio-transcriptie');
+					deleteButton.title = __('Klik nogmaals om deze zin te verwijderen', 'avpvh-audio-transcriptie');
 					setTimeout(() => {
 						if (deleteButton.isConnected) {
 							deleteButton.dataset.confirm = '';
 							deleteButton.textContent = '−';
-							deleteButton.title = 'Deze zin verwijderen';
+							deleteButton.title = __('Deze zin verwijderen', 'avpvh-audio-transcriptie');
 						}
 					}, 3000);
 					return;
@@ -640,7 +672,7 @@
 		}
 		const row = app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(id)}"]`);
 		bindSegmentRow(row);
-		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
+		app.querySelector('#avpvh-at-segment-count').textContent = segmentCount();
 		setFocus(id);
 		row.querySelector('textarea')?.focus();
 		markDirty(id);
@@ -649,13 +681,13 @@
 	function deleteSegment() {
 		const index = current.segments.findIndex((segment) => segment.id === focusedId);
 		if (index < 0) {
-			notice('Kies eerst de zin die je wilt verwijderen.', 'warning');
+			notice(__('Kies eerst de zin die je wilt verwijderen.', 'avpvh-audio-transcriptie'), 'warning');
 			return;
 		}
 		const nextFocus = current.segments[index + 1]?.id || current.segments[index - 1]?.id || null;
 		const [removed] = current.segments.splice(index, 1);
 		app.querySelector(`.avpvh-at-segment[data-id="${cssEscape(focusedId)}"]`)?.remove();
-		app.querySelector('#avpvh-at-segment-count').textContent = `${current.segments.length} fragmenten`;
+		app.querySelector('#avpvh-at-segment-count').textContent = segmentCount();
 		dirty.delete(removed.id);
 		deleted.add(removed.id);
 		setFocus(nextFocus, true);
@@ -663,14 +695,14 @@
 	}
 
 	function exportHtml() {
-		const title = escapeHtml(current.title || 'Transcriptie');
-		const summary = current.summary ? `<section class="summary"><h2>Samenvatting</h2>${current.summary}</section>` : '';
+		const title = escapeHtml(current.title || __('Transcriptie', 'avpvh-audio-transcriptie'));
+		const summary = current.summary ? `<section class="summary"><h2>${escapeHtml(__('Samenvatting', 'avpvh-audio-transcriptie'))}</h2>${current.summary}</section>` : '';
 		const audio = current.audio_url ? `<audio id="player" controls preload="metadata" src="${escapeHtml(current.audio_url)}"></audio>` : '';
 		const rows = current.segments.map((segment) => `<article class="segment" data-start="${Number(segment.start) || 0}">
 			<button type="button" class="time">${clock(segment.start)}</button>
-			<div><div class="labels"><strong>${escapeHtml(segment.speaker || 'Spreker onbekend')}</strong>${segment.party ? ` <span>${escapeHtml(segment.party)}</span>` : ''}</div><p>${escapeHtml(segment.text).replace(/\n/g, '<br>')}</p></div>
+			<div><div class="labels"><strong>${escapeHtml(segment.speaker || __('Spreker onbekend', 'avpvh-audio-transcriptie'))}</strong>${segment.party ? ` <span>${escapeHtml(segment.party)}</span>` : ''}</div><p>${escapeHtml(segment.text).replace(/\n/g, '<br>')}</p></div>
 		</article>`).join('');
-		const documentHtml = `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
+		const documentHtml = `<!doctype html><html lang="${escapeHtml(document.documentElement.lang || 'nl')}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
 		body{max-width:1100px;margin:2rem auto;padding:0 1rem;font:16px/1.55 system-ui,sans-serif;color:#1d2327}audio{width:100%;position:sticky;top:0;background:#fff}.summary,.segment{padding:1rem;border-bottom:1px solid #ddd}.segment{display:grid;grid-template-columns:7rem 1fr;gap:1rem}.time{border:0;background:none;color:#06c;cursor:pointer}.labels span{margin-left:.5rem;color:#555}p{margin:.35rem 0}.is-current{background:#eef7ff}@media(max-width:600px){.segment{grid-template-columns:1fr}}</style></head><body><h1>${title}</h1>${audio}${summary}<main>${rows}</main><script>
 		document.querySelectorAll('.segment').forEach(row=>row.querySelector('.time').addEventListener('click',()=>{const p=document.querySelector('#player');if(p){p.currentTime=Number(row.dataset.start);p.play()}}));
 		const p=document.querySelector('#player');if(p)p.addEventListener('timeupdate',()=>{let active;document.querySelectorAll('.segment').forEach(row=>{row.classList.remove('is-current');if(Number(row.dataset.start)<=p.currentTime)active=row});if(active){active.classList.add('is-current')}});
@@ -686,9 +718,9 @@
 	function exportMarkdown() {
 		const cell = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 		const lines = [
-			`# ${String(current.title || 'Transcriptie').replace(/\r?\n/g, ' ')}`,
+			`# ${String(current.title || __('Transcriptie', 'avpvh-audio-transcriptie')).replace(/\r?\n/g, ' ')}`,
 			'',
-			'| Tijd | Partij | Spreker | Transcriptie |',
+			`| ${cell(__('Tijd', 'avpvh-audio-transcriptie'))} | ${cell(__('Partij', 'avpvh-audio-transcriptie'))} | ${cell(__('Spreker', 'avpvh-audio-transcriptie'))} | ${cell(__('Transcriptie', 'avpvh-audio-transcriptie'))} |`,
 			'| --- | --- | --- | --- |',
 			...current.segments.map((segment) => `| ${clock(segment.start)} | ${cell(segment.party)} | ${cell(segment.speaker)} | ${cell(segment.text)} |`)
 		];
@@ -714,7 +746,10 @@
 				visibleRows.push(row);
 			}
 		});
-		app.querySelector('#avpvh-at-count').textContent = query ? (visibleRows.length ? `${visibleRows.length} resultaat/resultaten` : 'Geen resultaten') : '';
+		app.querySelector('#avpvh-at-count').textContent = query ? (visibleRows.length
+			/* translators: %d: number of matching segments. */
+			? sprintf(_n('%d resultaat', '%d resultaten', visibleRows.length, 'avpvh-audio-transcriptie'), visibleRows.length)
+			: __('Geen resultaten', 'avpvh-audio-transcriptie')) : '';
 		if (query && moveToFirst) {
 			setFocus(visibleRows[0]?.dataset.id || null, true);
 		}
@@ -729,23 +764,23 @@
 		}
 		body.dataset.loading = 'yes';
 		revealPanel(panel);
-		body.innerHTML = '<p class="avpvh-at-loading">Publicatieopties laden<span></span></p>';
+		body.innerHTML = `<p class="avpvh-at-loading">${escapeHtml(__('Publicatieopties laden', 'avpvh-audio-transcriptie'))}<span></span></p>`;
 		try {
 			const options = await api(`publishing-options?job_id=${current.id}`);
 			const existing = options.existing_page;
 			const shortcode = `[avpvh_audio_transcriptie id="${current.id}"]`;
 			const menus = [...(options.menus || []), ...(options.block_menus || [])];
-			panel.querySelector('summary strong').textContent = existing ? 'Transcriptiepagina bijwerken' : 'Transcriptiepagina maken';
+			panel.querySelector('summary strong').textContent = existing ? __('Transcriptiepagina bijwerken', 'avpvh-audio-transcriptie') : __('Transcriptiepagina maken', 'avpvh-audio-transcriptie');
 			body.dataset.loaded = 'yes';
-			body.innerHTML = `<p>De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.</p>
-				<label>Benodigde shortcode <span class="avpvh-at-shortcode-field"><input id="avpvh-at-shortcode" type="text" readonly value="${escapeHtml(shortcode)}"><button id="avpvh-at-copy-shortcode" type="button" class="button">Kopiëren</button></span></label>
-				<p class="description">Plak deze shortcode in een shortcodeblok op een bestaande pagina. “Pagina maken” doet dit automatisch.</p>
-				<label>Paginatitel <input id="avpvh-at-page-title" type="text" value="${escapeHtml(existing?.title || current.title)}"></label>
-				<label>Status <select id="avpvh-at-page-status"><option value="draft" ${'publish' !== existing?.status ? 'selected' : ''}>Concept</option><option value="publish" ${'publish' === existing?.status ? 'selected' : ''}>Gepubliceerd</option></select></label>
-				<label>WordPress-menu <select id="avpvh-at-page-menu"><option value="0">Niet toevoegen / huidige menuplaats behouden</option>${menus.map((menu) => `<option value="${escapeHtml(menu.value)}" ${menu.value === existing?.menu_ref ? 'selected' : ''}>${escapeHtml(menu.name)}</option>`).join('')}</select></label>
-				<label>Onder bestaand menu-item <select id="avpvh-at-page-parent"><option value="0">Op hoofdniveau</option></select></label>
-				<p class="description">Kies Gepubliceerd om de pagina voor bezoekers bereikbaar te maken. Menuplaatsing vereist het WordPress-recht om menu’s te wijzigen.</p>
-				<button id="avpvh-at-page-create" type="button" class="button button-primary">${existing ? 'Pagina bijwerken' : 'Pagina maken'}</button>
+			body.innerHTML = `<p>${escapeHtml(__('De pagina gebruikt de actuele transcriptie uit de editor; latere correcties verschijnen dus automatisch.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('Benodigde shortcode', 'avpvh-audio-transcriptie'))} <span class="avpvh-at-shortcode-field"><input id="avpvh-at-shortcode" type="text" readonly value="${escapeHtml(shortcode)}"><button id="avpvh-at-copy-shortcode" type="button" class="button">${escapeHtml(__('Kopiëren', 'avpvh-audio-transcriptie'))}</button></span></label>
+				<p class="description">${escapeHtml(__('Plak deze shortcode in een shortcodeblok op een bestaande pagina. “Pagina maken” doet dit automatisch.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('Paginatitel', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-page-title" type="text" value="${escapeHtml(existing?.title || current.title)}"></label>
+				<label>${escapeHtml(__('Status', 'avpvh-audio-transcriptie'))} <select id="avpvh-at-page-status"><option value="draft" ${'publish' !== existing?.status ? 'selected' : ''}>${escapeHtml(__('Concept', 'avpvh-audio-transcriptie'))}</option><option value="publish" ${'publish' === existing?.status ? 'selected' : ''}>${escapeHtml(__('Gepubliceerd', 'avpvh-audio-transcriptie'))}</option></select></label>
+				<label>${escapeHtml(__('WordPress-menu', 'avpvh-audio-transcriptie'))} <select id="avpvh-at-page-menu"><option value="0">${escapeHtml(__('Niet toevoegen / huidige menuplaats behouden', 'avpvh-audio-transcriptie'))}</option>${menus.map((menu) => `<option value="${escapeHtml(menu.value)}" ${menu.value === existing?.menu_ref ? 'selected' : ''}>${escapeHtml(menu.name)}</option>`).join('')}</select></label>
+				<label>${escapeHtml(__('Onder bestaand menu-item', 'avpvh-audio-transcriptie'))} <select id="avpvh-at-page-parent"><option value="0">${escapeHtml(__('Op hoofdniveau', 'avpvh-audio-transcriptie'))}</option></select></label>
+				<p class="description">${escapeHtml(__('Kies Gepubliceerd om de pagina voor bezoekers bereikbaar te maken. Menuplaatsing vereist het WordPress-recht om menu’s te wijzigen.', 'avpvh-audio-transcriptie'))}</p>
+				<button id="avpvh-at-page-create" type="button" class="button button-primary">${escapeHtml(existing ? __('Pagina bijwerken', 'avpvh-audio-transcriptie') : __('Pagina maken', 'avpvh-audio-transcriptie'))}</button>
 				<span id="avpvh-at-page-result" aria-live="polite"></span>`;
 
 			const menu = panel.querySelector('#avpvh-at-page-menu');
@@ -753,7 +788,7 @@
 			const status = panel.querySelector('#avpvh-at-page-status');
 			const updateParents = () => {
 				const selected = menus.find((item) => item.value === menu.value);
-				parent.innerHTML = '<option value="0">Op hoofdniveau</option>' + (selected?.items || []).filter((item) => item.value !== existing?.menu_item_ref).map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === existing?.parent_ref ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
+				parent.innerHTML = `<option value="0">${escapeHtml(__('Op hoofdniveau', 'avpvh-audio-transcriptie'))}</option>` + (selected?.items || []).filter((item) => item.value !== existing?.menu_item_ref).map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === existing?.parent_ref ? 'selected' : ''}>${escapeHtml(item.title)}</option>`).join('');
 				menu.disabled = !options.can_manage_menus;
 				parent.disabled = !options.can_manage_menus || '0' === menu.value;
 			};
@@ -770,9 +805,9 @@
 				input.select();
 				try {
 					await navigator.clipboard.writeText(shortcode);
-					setSaveState('Shortcode gekopieerd');
+					setSaveState(__('Shortcode gekopieerd', 'avpvh-audio-transcriptie'));
 				} catch (error) {
-					setSaveState('Shortcode geselecteerd; druk op Ctrl+C');
+					setSaveState(__('Shortcode geselecteerd; druk op Ctrl+C', 'avpvh-audio-transcriptie'));
 				}
 			});
 
@@ -780,7 +815,7 @@
 				const button = panel.querySelector('#avpvh-at-page-create');
 				const resultText = panel.querySelector('#avpvh-at-page-result');
 				button.disabled = true;
-				resultText.textContent = ' Pagina opslaan…';
+				resultText.textContent = ` ${__('Pagina opslaan…', 'avpvh-audio-transcriptie')}`;
 				try {
 					const result = await api(`jobs/${current.id}/publish`, {
 						method: 'POST',
@@ -791,9 +826,9 @@
 							parent_ref: 'publish' === status.value ? parent.value : ''
 						})
 					});
-					resultText.innerHTML = ` Opgeslagen. <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">Bekijk pagina</a> · <a href="${escapeHtml(result.edit_url)}">Bewerk in WordPress</a>`;
-					button.textContent = 'Pagina bijwerken';
-					panel.querySelector('summary strong').textContent = 'Transcriptiepagina bijwerken';
+					resultText.innerHTML = ` ${escapeHtml(__('Opgeslagen.', 'avpvh-audio-transcriptie'))} <a href="${escapeHtml(result.url)}" target="_blank" rel="noopener">${escapeHtml(__('Bekijk pagina', 'avpvh-audio-transcriptie'))}</a> · <a href="${escapeHtml(result.edit_url)}">${escapeHtml(__('Bewerk in WordPress', 'avpvh-audio-transcriptie'))}</a>`;
+					button.textContent = __('Pagina bijwerken', 'avpvh-audio-transcriptie');
+					panel.querySelector('summary strong').textContent = __('Transcriptiepagina bijwerken', 'avpvh-audio-transcriptie');
 				} catch (error) {
 					resultText.textContent = ` ${error.message}`;
 				} finally {
@@ -809,7 +844,7 @@
 
 	function scheduleSave() {
 		clearTimeout(saveTimer);
-		setSaveState('Wijzigingen…');
+		setSaveState(__('Wijzigingen…', 'avpvh-audio-transcriptie'));
 		saveTimer = setTimeout(save, 1200);
 	}
 
@@ -845,7 +880,7 @@
 		let retry = false;
 		saving = true;
 		saveSeq += 1;
-		setSaveState('Opslaan…');
+		setSaveState(__('Opslaan…', 'avpvh-audio-transcriptie'));
 		try {
 			const result = await api(`jobs/${job.id}/segments`, {
 				method: 'PUT',
@@ -861,7 +896,7 @@
 					}
 				});
 				sentDeleted.forEach((id) => deleted.delete(id));
-				setSaveState(hasPendingChanges() ? 'Wijzigingen…' : 'Opgeslagen');
+				setSaveState(hasPendingChanges() ? __('Wijzigingen…', 'avpvh-audio-transcriptie') : __('Opgeslagen', 'avpvh-audio-transcriptie'));
 			}
 		} catch (error) {
 			if (job === current) {
@@ -871,14 +906,14 @@
 					// edits, insertions and deletions on top of it, and save again.
 					conflictRetries += 1;
 					applyRemote(newer, false);
-					notice('Er was een nieuwere versie; je wijzigingen zijn daarmee samengevoegd.', 'warning');
+					notice(__('Er was een nieuwere versie; je wijzigingen zijn daarmee samengevoegd.', 'avpvh-audio-transcriptie'), 'warning');
 				} else if (409 === error.status) {
 					conflicted = true;
-					setSaveState('Niet opgeslagen');
-					notice('Er is een nieuwere versie. Kopieer je laatste wijzigingen en herlaad de transcriptie om ze samen te voegen.', 'error');
+					setSaveState(__('Niet opgeslagen', 'avpvh-audio-transcriptie'));
+					notice(__('Er is een nieuwere versie. Kopieer je laatste wijzigingen en herlaad de transcriptie om ze samen te voegen.', 'avpvh-audio-transcriptie'), 'error');
 				} else {
 					retry = true;
-					setSaveState('Opslaan mislukt; nieuwe poging…');
+					setSaveState(__('Opslaan mislukt; nieuwe poging…', 'avpvh-audio-transcriptie'));
 				}
 			}
 		} finally {
@@ -1011,12 +1046,18 @@
 			return;
 		}
 		revealPanel(panel);
-		panel.innerHTML = '<p>Geschiedenis laden…</p>';
+		panel.innerHTML = `<p>${escapeHtml(__('Geschiedenis laden…', 'avpvh-audio-transcriptie'))}</p>`;
 		try {
 			const revisions = await api(`jobs/${current.id}/history`);
-			panel.innerHTML = `<h3>Correctiegeschiedenis</h3>${revisions.map((revision) => config.canEdit ? `<button type="button" class="button avpvh-at-restore" data-revision="${revision.revision}">Versie ${revision.revision} · ${escapeHtml(revision.created_at)}</button>` : `<p>Versie ${revision.revision} · ${escapeHtml(revision.created_at)}</p>`).join('') || '<p>Nog geen eerdere versies.</p>'}`;
+			const versionLabel = (revision) => escapeHtml(sprintf(
+				/* translators: 1: revision number, 2: date and time of the revision. */
+				__('Versie %1$d · %2$s', 'avpvh-audio-transcriptie'),
+				revision.revision,
+				revision.created_at
+			));
+			panel.innerHTML = `<h3>${escapeHtml(__('Correctiegeschiedenis', 'avpvh-audio-transcriptie'))}</h3>${revisions.map((revision) => config.canEdit ? `<button type="button" class="button avpvh-at-restore" data-revision="${revision.revision}">${versionLabel(revision)}</button>` : `<p>${versionLabel(revision)}</p>`).join('') || `<p>${escapeHtml(__('Nog geen eerdere versies.', 'avpvh-audio-transcriptie'))}</p>`}`;
 			panel.querySelectorAll('.avpvh-at-restore').forEach((button) => button.addEventListener('click', async () => {
-				if (!window.confirm('Deze versie terugzetten? De huidige versie blijft in de geschiedenis bewaard.')) {
+				if (!window.confirm(__('Deze versie terugzetten? De huidige versie blijft in de geschiedenis bewaard.', 'avpvh-audio-transcriptie'))) {
 					return;
 				}
 				const job = current;
@@ -1063,15 +1104,19 @@
 		}
 		revealPanel(panel);
 		body.dataset.loaded = 'yes';
-		body.innerHTML = `${current.summary ? `<div class="avpvh-at-summary-result"><h3>Bestaande samenvatting</h3>${current.summary}</div>` : ''}
-			${config.summaryConfigured ? `<p class="description">Route: ${summaryRoute()}.</p>` : '<p class="notice notice-warning inline"><strong>Samenvatting is nog niet geconfigureerd.</strong> Configureer een WordPress AI-connector, vul onder Instellingen de directe LLM API-URL en het model in, of stel de transcriptieservice in.</p>'}
-			${current.summary_pending ? '<p class="description">Er wordt op de achtergrond een samenvatting gemaakt; deze verschijnt hier zodra hij klaar is.</p>' : ''}
-			<label>Procedurele toelichting <textarea id="avpvh-at-summary-procedure" rows="7">${escapeHtml(defaults.summary_procedure_prompt || '')}</textarea></label>
-			<p class="description">Beschrijf hier de werkwijze, structuur, zorgvuldigheid en gewenste vorm van het resultaat.</p>
-			<label>Inhoudelijke toelichting <textarea id="avpvh-at-summary-content" rows="7">${escapeHtml(defaults.summary_content_prompt || '')}</textarea></label>
-			<p class="description">Beschrijf hier welke onderwerpen, vragen, partijen of accenten inhoudelijk extra aandacht moeten krijgen.</p>
-			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>Samenvatting maken</button>
-			${!config.summaryConfigured && config.canManage ? '<button id="avpvh-at-summary-settings" type="button" class="button">Open instellingen</button>' : ''}
+		body.innerHTML = `${current.summary ? `<div class="avpvh-at-summary-result"><h3>${escapeHtml(__('Bestaande samenvatting', 'avpvh-audio-transcriptie'))}</h3>${current.summary}</div>` : ''}
+			${config.summaryConfigured ? `<p class="description">${escapeHtml(sprintf(
+				/* translators: %s: how the summary is generated, e.g. the transcription service. */
+				__('Route: %s.', 'avpvh-audio-transcriptie'),
+				summaryRoute()
+			))}</p>` : `<p class="notice notice-warning inline"><strong>${escapeHtml(__('Samenvatting is nog niet geconfigureerd.', 'avpvh-audio-transcriptie'))}</strong> ${escapeHtml(__('Configureer een WordPress AI-connector, vul onder Instellingen de directe LLM API-URL en het model in, of stel de transcriptieservice in.', 'avpvh-audio-transcriptie'))}</p>`}
+			${current.summary_pending ? `<p class="description">${escapeHtml(__('Er wordt op de achtergrond een samenvatting gemaakt; deze verschijnt hier zodra hij klaar is.', 'avpvh-audio-transcriptie'))}</p>` : ''}
+			<label>${escapeHtml(__('Procedurele toelichting', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-summary-procedure" rows="7">${escapeHtml(defaults.summary_procedure_prompt || '')}</textarea></label>
+			<p class="description">${escapeHtml(__('Beschrijf hier de werkwijze, structuur, zorgvuldigheid en gewenste vorm van het resultaat.', 'avpvh-audio-transcriptie'))}</p>
+			<label>${escapeHtml(__('Inhoudelijke toelichting', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-summary-content" rows="7">${escapeHtml(defaults.summary_content_prompt || '')}</textarea></label>
+			<p class="description">${escapeHtml(__('Beschrijf hier welke onderwerpen, vragen, partijen of accenten inhoudelijk extra aandacht moeten krijgen.', 'avpvh-audio-transcriptie'))}</p>
+			<button id="avpvh-at-run-summary" type="button" class="button button-primary" ${config.summaryConfigured ? '' : 'disabled'}>${escapeHtml(__('Samenvatting maken', 'avpvh-audio-transcriptie'))}</button>
+			${!config.summaryConfigured && config.canManage ? `<button id="avpvh-at-summary-settings" type="button" class="button">${escapeHtml(__('Open instellingen', 'avpvh-audio-transcriptie'))}</button>` : ''}
 			<span id="avpvh-at-summary-result" aria-live="polite"></span>`;
 		panel.querySelector('#avpvh-at-run-summary').addEventListener('click', createSummary);
 		panel.querySelector('#avpvh-at-summary-settings')?.addEventListener('click', () => app.querySelector('[data-tab="settings"]').click());
@@ -1079,9 +1124,9 @@
 
 	function summaryRoute() {
 		if (config.aiClientAvailable) {
-			return 'centrale WordPress AI Client';
+			return __('centrale WordPress AI Client', 'avpvh-audio-transcriptie');
 		}
-		return defaults.summary_api_url ? 'direct ingestelde LLM-API' : 'transcriptieservice';
+		return defaults.summary_api_url ? __('direct ingestelde LLM-API', 'avpvh-audio-transcriptie') : __('transcriptieservice', 'avpvh-audio-transcriptie');
 	}
 
 	async function createSummary() {
@@ -1092,7 +1137,7 @@
 		const contentPrompt = panel.querySelector('#avpvh-at-summary-content').value;
 		const job = current;
 		button.disabled = true;
-		resultText.textContent = ' Correcties opslaan en samenvatting maken…';
+		resultText.textContent = ` ${__('Correcties opslaan en samenvatting maken…', 'avpvh-audio-transcriptie')}`;
 		try {
 			await flushSave();
 			const result = await api(`jobs/${job.id}/summary`, {
@@ -1106,10 +1151,10 @@
 				current.summary = result.summary;
 				current.summary_pending = false;
 				showSummary();
-				resultText.textContent = ' Samenvatting gemaakt.';
+				resultText.textContent = ` ${__('Samenvatting gemaakt.', 'avpvh-audio-transcriptie')}`;
 			} else {
 				current.summary_pending = true;
-				resultText.textContent = ' De samenvatting is gestart en verschijnt zodra deze klaar is.';
+				resultText.textContent = ` ${__('De samenvatting is gestart en verschijnt zodra deze klaar is.', 'avpvh-audio-transcriptie')}`;
 				void poll();
 			}
 		} catch (error) {
@@ -1122,38 +1167,38 @@
 	async function renderSettings() {
 		const generation = ++viewGeneration;
 		const view = app.querySelector('#avpvh-at-view');
-		view.innerHTML = '<p class="avpvh-at-loading">Instellingen laden<span></span></p>';
+		view.innerHTML = `<p class="avpvh-at-loading">${escapeHtml(__('Instellingen laden', 'avpvh-audio-transcriptie'))}<span></span></p>`;
 		try {
 			const settings = await api('settings');
 			if (generation !== viewGeneration) {
 				return;
 			}
 			view.innerHTML = `<section class="avpvh-at-card avpvh-at-settings">
-				<h2>Transcriptieservice</h2>
-				<p>De service-URL bepaalt met welke API de plugin praat. De gekozen engine, modelversie, prompt, glossary en blokgrootte worden bij iedere nieuwe opdracht aan die API meegestuurd.</p>
-				<label>Service-URL <input id="avpvh-at-url" type="url" value="${escapeHtml(settings.service_url)}" placeholder="https://service.example"></label>
-				<label>Servicesleutel <input id="avpvh-at-key" type="password" placeholder="${escapeHtml(settings.license_hint || 'Servicesleutel')}"></label>
-				<h3>Standaard transcriptie-instellingen</h3>
-				<label>Transcriptie-engine/provider <input id="avpvh-at-provider-setting" type="text" value="${escapeHtml(settings.provider)}" list="avpvh-at-setting-providers"><datalist id="avpvh-at-setting-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
-				<label>Modelversie <input id="avpvh-at-model-setting" type="text" value="${escapeHtml(settings.default_model)}" list="avpvh-at-setting-models"><datalist id="avpvh-at-setting-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
-				<label>Taalcode <input id="avpvh-at-language-setting" type="text" value="${escapeHtml(settings.default_language)}"></label>
-				<label>Blokgrootte in minuten <input id="avpvh-at-chunk-setting" type="number" min="1" max="60" value="${escapeHtml(settings.chunk_minutes)}"></label>
-				<p class="description">Advies: 10 minuten is een goed uitgangspunt voor lange gesprekken. Gebruik 5 minuten bij weinig geheugen of snelle tussentijdse resultaten; 15–20 minuten kan bij ruime capaciteit en levert meer context per blok.</p>
-				<label>Standaardprompt <textarea id="avpvh-at-prompt-setting" rows="7">${escapeHtml(settings.default_prompt)}</textarea></label>
-				<label>Standaardglossary <textarea id="avpvh-at-glossary-setting" rows="7" placeholder="Eén term per regel of komma-gescheiden">${escapeHtml(settings.default_glossary)}</textarea></label>
-				<p>Status: <strong>${settings.license_registered ? 'sleutel geregistreerd' : 'niet ingesteld'}</strong></p>
-				<h3>Samenvatting en AI-provider</h3>
-				<p>WordPress AI Client: <strong>${settings.ai_client_available ? 'provider beschikbaar; deze route krijgt voorrang' : 'nog geen geschikte connector geconfigureerd'}</strong>.</p>
-				<p>De onderstaande directe chat-completions-instellingen blijven beschikbaar als terugval wanneer WordPress geen AI-provider heeft.</p>
-				<label>LLM API-URL <input id="avpvh-at-summary-url" type="url" value="${escapeHtml(settings.summary_api_url)}" placeholder="https://provider.example/v1/chat/completions"></label>
-				<label>LLM API-key <input id="avpvh-at-summary-key" type="password" placeholder="${escapeHtml(settings.summary_key_hint || 'API-key; leeg laten om de bestaande te behouden')}"></label>
-				<label>LLM-model <input id="avpvh-at-summary-model" type="text" value="${escapeHtml(settings.summary_model)}" placeholder="Modelnaam van de provider"></label>
-				<label>Standaard procedurele toelichting <textarea id="avpvh-at-summary-procedure-setting" rows="6">${escapeHtml(settings.summary_procedure_prompt)}</textarea></label>
-				<p class="description">Werkwijze, opbouw, voorzichtigheid en gewenste uitvoervorm.</p>
-				<label>Standaard inhoudelijke toelichting <textarea id="avpvh-at-summary-content-setting" rows="6">${escapeHtml(settings.summary_content_prompt)}</textarea></label>
-				<p class="description">Onderwerpen, vragen en accenten die inhoudelijk moeten worden behandeld.</p>
-				<p>Status LLM-key: <strong>${settings.summary_registered ? 'sleutel geregistreerd' : 'niet ingesteld of niet vereist'}</strong></p>
-				<button id="avpvh-at-save-settings" type="button" class="button button-primary">Instellingen opslaan</button>
+				<h2>${escapeHtml(__('Transcriptieservice', 'avpvh-audio-transcriptie'))}</h2>
+				<p>${escapeHtml(__('De service-URL bepaalt met welke API de plugin praat. De gekozen engine, modelversie, prompt, glossary en blokgrootte worden bij iedere nieuwe opdracht aan die API meegestuurd.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('Service-URL', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-url" type="url" value="${escapeHtml(settings.service_url)}" placeholder="https://service.example"></label>
+				<label>${escapeHtml(__('Servicesleutel', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-key" type="password" placeholder="${escapeHtml(settings.license_hint || __('Servicesleutel', 'avpvh-audio-transcriptie'))}"></label>
+				<h3>${escapeHtml(__('Standaard transcriptie-instellingen', 'avpvh-audio-transcriptie'))}</h3>
+				<label>${escapeHtml(__('Transcriptie-engine/provider', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-provider-setting" type="text" value="${escapeHtml(settings.provider)}" list="avpvh-at-setting-providers"><datalist id="avpvh-at-setting-providers"><option value="faster-whisper"><option value="openai"><option value="custom"></datalist></label>
+				<label>${escapeHtml(__('Modelversie', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-model-setting" type="text" value="${escapeHtml(settings.default_model)}" list="avpvh-at-setting-models"><datalist id="avpvh-at-setting-models"><option value="small"><option value="medium"><option value="large-v3-turbo"></datalist></label>
+				<label>${escapeHtml(__('Taalcode', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-language-setting" type="text" value="${escapeHtml(settings.default_language)}"></label>
+				<label>${escapeHtml(__('Blokgrootte in minuten', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-chunk-setting" type="number" min="1" max="60" value="${escapeHtml(settings.chunk_minutes)}"></label>
+				<p class="description">${escapeHtml(__('Advies: 10 minuten is een goed uitgangspunt voor lange gesprekken. Gebruik 5 minuten bij weinig geheugen of snelle tussentijdse resultaten; 15–20 minuten kan bij ruime capaciteit en levert meer context per blok.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('Standaardprompt', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-prompt-setting" rows="7">${escapeHtml(settings.default_prompt)}</textarea></label>
+				<label>${escapeHtml(__('Standaardglossary', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-glossary-setting" rows="7" placeholder="${escapeHtml(__('Eén term per regel of komma-gescheiden', 'avpvh-audio-transcriptie'))}">${escapeHtml(settings.default_glossary)}</textarea></label>
+				<p>${escapeHtml(__('Status:', 'avpvh-audio-transcriptie'))} <strong>${escapeHtml(settings.license_registered ? __('sleutel geregistreerd', 'avpvh-audio-transcriptie') : __('niet ingesteld', 'avpvh-audio-transcriptie'))}</strong></p>
+				<h3>${escapeHtml(__('Samenvatting en AI-provider', 'avpvh-audio-transcriptie'))}</h3>
+				<p>${escapeHtml(__('WordPress AI Client:', 'avpvh-audio-transcriptie'))} <strong>${escapeHtml(settings.ai_client_available ? __('provider beschikbaar; deze route krijgt voorrang', 'avpvh-audio-transcriptie') : __('nog geen geschikte connector geconfigureerd', 'avpvh-audio-transcriptie'))}</strong>.</p>
+				<p>${escapeHtml(__('De onderstaande directe chat-completions-instellingen blijven beschikbaar als terugval wanneer WordPress geen AI-provider heeft.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('LLM API-URL', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-summary-url" type="url" value="${escapeHtml(settings.summary_api_url)}" placeholder="https://provider.example/v1/chat/completions"></label>
+				<label>${escapeHtml(__('LLM API-key', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-summary-key" type="password" placeholder="${escapeHtml(settings.summary_key_hint || __('API-key; leeg laten om de bestaande te behouden', 'avpvh-audio-transcriptie'))}"></label>
+				<label>${escapeHtml(__('LLM-model', 'avpvh-audio-transcriptie'))} <input id="avpvh-at-summary-model" type="text" value="${escapeHtml(settings.summary_model)}" placeholder="${escapeHtml(__('Modelnaam van de provider', 'avpvh-audio-transcriptie'))}"></label>
+				<label>${escapeHtml(__('Standaard procedurele toelichting', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-summary-procedure-setting" rows="6">${escapeHtml(settings.summary_procedure_prompt)}</textarea></label>
+				<p class="description">${escapeHtml(__('Werkwijze, opbouw, voorzichtigheid en gewenste uitvoervorm.', 'avpvh-audio-transcriptie'))}</p>
+				<label>${escapeHtml(__('Standaard inhoudelijke toelichting', 'avpvh-audio-transcriptie'))} <textarea id="avpvh-at-summary-content-setting" rows="6">${escapeHtml(settings.summary_content_prompt)}</textarea></label>
+				<p class="description">${escapeHtml(__('Onderwerpen, vragen en accenten die inhoudelijk moeten worden behandeld.', 'avpvh-audio-transcriptie'))}</p>
+				<p>${escapeHtml(__('Status LLM-key:', 'avpvh-audio-transcriptie'))} <strong>${escapeHtml(settings.summary_registered ? __('sleutel geregistreerd', 'avpvh-audio-transcriptie') : __('niet ingesteld of niet vereist', 'avpvh-audio-transcriptie'))}</strong></p>
+				<button id="avpvh-at-save-settings" type="button" class="button button-primary">${escapeHtml(__('Instellingen opslaan', 'avpvh-audio-transcriptie'))}</button>
 				<span id="avpvh-at-license-result" aria-live="polite"></span>
 			</section>`;
 			view.querySelector('#avpvh-at-save-settings').addEventListener('click', async () => {
@@ -1181,9 +1226,9 @@
 					config.summaryConfigured = Boolean(updated.summary_configured);
 					if (updated.service_url && updated.license_registered) {
 						const result = await api('license/validate', { method: 'POST', body: '{}' });
-						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ' Instellingen opgeslagen; transcriptiesleutel geldig ✓' : ' Instellingen opgeslagen; transcriptiesleutel ongeldig';
+						view.querySelector('#avpvh-at-license-result').textContent = result.valid ? ` ${__('Instellingen opgeslagen; transcriptiesleutel geldig ✓', 'avpvh-audio-transcriptie')}` : ` ${__('Instellingen opgeslagen; transcriptiesleutel ongeldig', 'avpvh-audio-transcriptie')}`;
 					} else {
-						view.querySelector('#avpvh-at-license-result').textContent = ' Instellingen opgeslagen';
+						view.querySelector('#avpvh-at-license-result').textContent = ` ${__('Instellingen opgeslagen', 'avpvh-audio-transcriptie')}`;
 					}
 				} catch (error) {
 					view.querySelector('#avpvh-at-license-result').textContent = ` ${error.message}`;

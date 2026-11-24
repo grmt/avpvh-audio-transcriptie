@@ -83,6 +83,7 @@ This plugin can process voice recordings, transcript text, speaker labels, and g
 * Never copy keys defined in wp-config.php into the database; keep percent-encoded keys and upload headers intact.
 * Prevent lost edits: atomic revision checks, refresh merges against the latest row, tombstones for deleted fragments, and safer saving, polling and navigation in the editor.
 * Enable summaries when only the transcription service or a keyless LLM API is configured, and load background summaries on completed jobs.
+* Make the admin screen translatable: its texts use wp.i18n and load JSON translations from languages/, and job statuses get readable labels.
 * Hide publishing and summary controls from users without permission; allow repeated page updates and move or relabel existing block-navigation links.
 * Keep keyboard activation of buttons and links working; the Space shortcut only toggles audio outside controls.
 * Smaller job-list queries, no full editor re-render on insert or poll, a clean build directory, and JavaScript checks for both scripts.
