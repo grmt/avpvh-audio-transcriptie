@@ -54,6 +54,11 @@ final class WordPressIntegrationTest extends RestTestCase {
 		$this->assertStringContainsString( '"default_model":"medium"', $data );
 		$this->assertStringNotContainsString( 'secret-key', $data );
 		$this->assertStringNotContainsString( 'sk-hidden', $data );
+
+		$script = wp_scripts()->registered['avpvh-at-admin'];
+		$this->assertContains( 'wp-i18n', $script->deps );
+		$this->assertSame( 'avpvh-audio-transcriptie', $script->textdomain );
+		$this->assertSame( AVPVH_AT_DIR . 'languages', $script->translations_path );
 	}
 
 	public function test_privacy_policy_text_is_suggested(): void {

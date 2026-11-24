@@ -313,7 +313,8 @@ final class AVPVH_AT_Plugin {
 		$settings            = self::settings();
 		$ai_client_available = self::ai_client_available();
 		wp_enqueue_style( 'avpvh-at-admin', AVPVH_AT_URL . 'assets/admin.css', array(), AVPVH_AT_VERSION );
-		wp_enqueue_script( 'avpvh-at-admin', AVPVH_AT_URL . 'assets/admin.js', array(), AVPVH_AT_VERSION, true );
+		wp_enqueue_script( 'avpvh-at-admin', AVPVH_AT_URL . 'assets/admin.js', array( 'wp-i18n' ), AVPVH_AT_VERSION, true );
+		wp_set_script_translations( 'avpvh-at-admin', 'avpvh-audio-transcriptie', AVPVH_AT_DIR . 'languages' );
 		wp_localize_script(
 			'avpvh-at-admin',
 			'avpvhAudioTranscriptie',
@@ -326,9 +327,6 @@ final class AVPVH_AT_Plugin {
 				'summaryConfigured' => self::summary_configured( $settings, $ai_client_available ),
 				'aiClientAvailable' => $ai_client_available,
 				'defaults'          => current_user_can( 'upload_files' ) ? self::transcription_defaults() : array(),
-				'i18n'              => array(
-					'requestFailed' => esc_html__( 'De aanvraag is mislukt.', 'avpvh-audio-transcriptie' ),
-				),
 			)
 		);
 	}
